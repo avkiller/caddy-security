@@ -3,7 +3,7 @@ module github.com/avkiller/caddy-security
 go 1.21
 
 require (
-	github.com/caddyserver/caddy/v2 v2.8.4
+	github.com/caddyserver/caddy/v2 v2.9.1
 	github.com/google/go-cmp v0.6.0
 	github.com/google/uuid v1.6.0
 	github.com/greenpau/caddy-trace v1.1.13
