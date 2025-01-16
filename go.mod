@@ -1,6 +1,6 @@
 module github.com/avkiller/caddy-security
 
-go 1.21
+go 1.23
 
 require (
 	github.com/caddyserver/caddy/v2 v2.9.1
