@@ -5,9 +5,8 @@ name: Go module update
 
 on:
   push:
-    branches: [ "master" ]
-  pull_request:
-    branches: [ "master" ]
+    paths:
+      - 'go.mod'
   workflow_dispatch:
 
 jobs:
@@ -29,6 +28,14 @@ jobs:
       run: |
           git config --global user.email "avkiller2012@gmail.com"
           git config --global user.name "avkiller"
-          git add .
-          git commit -m "Update go modules"
-          git push
+          
+          if git status --porcelain | grep -q .; then
+            echo "代码发生变化推送最新更改"
+            # 执行推送操作
+            git add .
+            git commit -m "Update go modules"
+            git push
+          else
+            echo "代码没有发生变化"
+          fi
+          
