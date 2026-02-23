@@ -2,10 +2,7 @@ module github.com/avkiller/caddy-security
 
 go 1.25.0
 
-toolchain go1.24.2
-
 require (
-	github.com/caddyserver/caddy/v2 v2.10.2
 	github.com/caddyserver/caddy/v2 v2.10.2
 	github.com/google/go-cmp v0.7.0
 	github.com/google/uuid v1.6.0
