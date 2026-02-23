@@ -6,6 +6,7 @@ require (
 	github.com/caddyserver/caddy/v2 v2.10.2
 	github.com/google/go-cmp v0.7.0
 	github.com/google/uuid v1.6.0
+	github.com/greenpau/caddy-security v1.1.32
 	github.com/greenpau/caddy-trace v1.1.13
 	github.com/greenpau/go-authcrunch v1.1.8
 	github.com/tidwall/gjson v1.18.0
