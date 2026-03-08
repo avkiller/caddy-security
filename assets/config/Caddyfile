@@ -25,8 +25,9 @@
 			user webadmin {
 				name Webmaster
 				email webadmin@localhost.localdomain
-				password "$2a$10$VLCDIncXaRFshFTGcz2aP.q.gR0O6y1i6mVDks/7WmE3JKLjPD.wu" overwrite
-				roles authp/admin authp/user
+				password "$2a$10$r3mhN5ZzrmufA2rjcn4iCuaAXN9.3OCDxiPYheSuU8Pq1xWiiDBhG" overwrite
+				#password "Td45@4d269b7ec2f5ffd31ee5"
+				roles "authp/admin" "authp/user"
 			}
 			user jsmith {
 				name John Smith
@@ -66,7 +67,7 @@
 			transform user {
 				match origin local
 				action add role authp/user
-				ui link "Portal Settings" /auth/settings icon "las la-cog"
+				ui link "Portal Settings" /auth/profile/ icon "las la-cog"
 			}
 			trust logout redirect uri domain prefix google path suffix /
 		}

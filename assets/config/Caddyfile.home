@@ -1,0 +1,175 @@
+{
+	debug
+	local_certs
+	http_port 8080
+	https_port 8443
+	admin off
+
+	on_demand_tls {
+		ask http://localhost:5555/
+	}
+
+	order trace before respond
+	order authenticate before respond
+	order authorize before basicauth
+
+	security {
+		credentials root@localhost {
+			username root
+			password foobar
+		}
+
+		messaging email provider localhost-smtp-server {
+			address 127.0.0.1:1025
+			protocol smtp
+			passwordless
+			sender root@localhost "My Auth Portal"
+			bcc greenpau@localhost
+		}
+
+		oauth identity provider github {
+			realm github
+			driver github
+			client_id {env.GITHUB_APP_CLIENT_ID}
+			client_secret {env.GITHUB_APP_CLIENT_SECRET}
+			icon github priority 100
+		}
+
+		oauth identity provider linkedin {
+			realm linkedin
+			driver linkedin
+			client_id {env.LINKEDIN_APP_CLIENT_ID}
+			client_secret {env.LINKEDIN_APP_CLIENT_SECRET}
+			icon linkedin priority 200
+		}
+
+		local identity store localdb {
+			realm local
+			path assets/config/users.json
+			user webadmin {
+				name Webmaster
+				email webadmin@localhost.localdomain
+				# password "Td45@4d269b7ec2f5ffd31ee5" overwrite
+				password "bcrypt:10:$2a$10$r3mhN5ZzrmufA2rjcn4iCuaAXN9.3OCDxiPYheSuU8Pq1xWiiDBhG" overwrite
+				roles "authp/admin" "authp/user"
+			}
+			user jsmith {
+				name John Smith
+				email jsmith@localhost.localdomain
+				password "My@Password123"
+				roles "authp/user" "dash"
+			}
+			user mstone {
+				name Mia Stone
+				email mstone@localhost.localdomain
+				password "My@Password123"
+				roles "authp/user" "dash"
+			}
+		}
+
+		user registration localdbRegistry {
+			dropbox assets/config/registrations.json
+			title "User Registration"
+			code "NY2020"
+			require accept terms
+			require domain mx
+			email provider localhost-smtp-server
+			admin email admin@localhost
+			identity store localdb
+		}
+
+		authentication portal myportal {
+			crypto default token lifetime 3600
+			crypto key sign-verify 01ee2688-36e4-47f9-8c06-d18483702520
+			enable identity store localdb
+			#cookie domain myfiosgateway.com
+			cookie guess domain
+			ui {
+				#language fr
+				#language zh
+				links {
+					"My Website" "https://go.myfiosgateway.com:8443/app/" icon "las la-star"
+					#"Debug" "https://go.myfiosgateway.com:8443/version" icon "las la-star"
+					"My Identity" "/auth/whoami" icon "las la-user"
+				}
+			}
+			transform user {
+				match origin local
+				action add role authp/user
+				ui link "User Profile" /auth/profile/ icon "las la-cog"
+			}
+			trust logout redirect uri domain prefix google path suffix /
+			trust login redirect uri domain exact google.com path suffix /
+			enable admin api
+
+			transform user {
+				match realm github
+				action add role authp/user
+			}
+			enable identity provider github
+			enable identity provider linkedin
+		}
+
+		authorization policy mypolicy {
+			set auth url /auth/
+			crypto key verify 01ee2688-36e4-47f9-8c06-d18483702520
+			allow roles authp/admin authp/user
+		}
+	}
+}
+
+http://localhost:5555 {
+	bind 127.0.0.1
+	# trace tag="tls-on-demand"
+	@allowed_localhost query domain=localhost
+	@allowed_local query domain=go.myfiosgateway.com
+	@allowed_global query domain=auth.myfiosgateway.com
+	@allowed_apps query domain=go.myfiosgateway.com
+	respond @allowed_localhost 200
+	respond @allowed_local 200
+	respond @allowed_global 200
+	respond @allowed_apps 200
+	respond 400
+}
+
+auth.myfiosgateway.com:8443 {
+	tls internal {
+		on_demand
+	}
+
+	header {
+		Access-Control-Allow-Origin https://go.myfiosgateway.com
+		Access-Control-Allow-Credentials true
+		Access-Control-Allow-Methods *
+		Access-Control-Allow-Headers *
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+	}
+
+	route /auth* {
+		authenticate with myportal
+	}
+
+	route /* {
+		redir https://{hostport}/auth/ 302
+	}
+}
+
+go.myfiosgateway.com:8443 {
+	tls internal {
+		on_demand
+	}
+	
+	route /version* {
+		authorize with mypolicy
+		respond * "1.0.0 {http.auth.user.id} {http.auth.user.realm} {http.auth.user.roles} {http.auth.user.email} {http.auth.user.origin} {http.auth.user.issuer}" 200
+		#respond * "1.0.0" 200
+	}
+
+	route /app* {
+		authorize with mypolicy
+		file_server {
+			root ./assets/config/
+		}
+	}
+}

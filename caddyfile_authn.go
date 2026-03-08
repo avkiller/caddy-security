@@ -67,7 +67,7 @@ const (
 //	    enable sso provider <name>
 //	    enable user registration <name>
 //
-//		trust logout redirect uri domain [exact|partial|prefix|suffix|regex] <domain_name> path [exact|partial|prefix|suffix|regex] <path>
+//		trust [login|logout] redirect uri domain [exact|partial|prefix|suffix|regex] <domain_name> path [exact|partial|prefix|suffix|regex] <path>
 //
 //	}
 func parseCaddyfileAuthentication(d *caddyfile.Dispenser, repl *caddy.Replacer, cfg *authcrunch.Config) error {
@@ -102,7 +102,7 @@ func parseCaddyfileAuthentication(d *caddyfile.Dispenser, repl *caddy.Replacer, 
 					return err
 				}
 			case "cookie":
-				if err := parseCaddyfileAuthPortalCookie(d, repl, p, rootDirective, util.FindReplaceAll(repl, v)); err != nil {
+				if err := parseCaddyfileAuthPortalCookie(d, p, rootDirective, util.FindReplaceAll(repl, v)); err != nil {
 					return err
 				}
 			case "backend", "backends":

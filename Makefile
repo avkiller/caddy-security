@@ -6,7 +6,7 @@ LATEST_GIT_COMMIT:=$(shell git log --format="%H" -n 1 | head -1)
 BUILD_USER:=$(shell whoami)
 BUILD_DATE:=$(shell date +"%Y-%m-%d")
 BUILD_DIR:=$(shell pwd)
-CADDY_VERSION="v2.9.1"
+CADDY_VERSION="v2.11.1"
 
 all: info build
 	@echo "$@: complete"
@@ -34,7 +34,7 @@ devbuild:
 		xcaddy build $(CADDY_VERSION) --output ../$(PLUGIN_NAME)/bin/authcrunch \
 		--with github.com/greenpau/caddy-security@$(LATEST_GIT_COMMIT)=$(BUILD_DIR) \
 		--with github.com/greenpau/caddy-trace@latest \
-		--with github.com/greenpau/go-authcrunch@v1.1.4=/Users/greenpau/dev/src/github.com/greenpau/go-authcrunch
+		--with github.com/greenpau/go-authcrunch@v1.1.9=/Users/greenpau/dev/src/github.com/greenpau/go-authcrunch
 	@go build -v -o ./bin/authcrunch cmd/authcrunch/main.go;
 	@./bin/authcrunch version
 	@echo "$@: complete"
