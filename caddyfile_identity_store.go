@@ -21,6 +21,7 @@ import (
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/greenpau/caddy-security/pkg/util"
 	"github.com/greenpau/go-authcrunch"
+	"github.com/greenpau/go-authcrunch/pkg/authn/icons"
 	"github.com/greenpau/go-authcrunch/pkg/errors"
 )
 
@@ -51,6 +52,8 @@ import (
 //	  support email <email_address>
 //
 //	  fallback role <role_name> [<role_name>]
+//	  icon <text> [<icon_css_class_name> <icon_color> <icon_background_color>] [priority <number>]
+//	  enable <short|full> automatic group mapping
 //	}
 func parseCaddyfileIdentityStore(d *caddyfile.Dispenser, repl *caddy.Replacer, cfg *authcrunch.Config, kind, name string, shortcuts []string) error {
 	var disabled bool
@@ -139,6 +142,12 @@ func parseCaddyfileIdentityStore(d *caddyfile.Dispenser, repl *caddy.Replacer, c
 				serverMaps = append(serverMaps, serverMap)
 			}
 			m[k] = serverMaps
+		case "icon":
+			icon, err := icons.Parse(args)
+			if err != nil {
+				return errors.ErrMalformedDirectiveValue.WithArgs(rd, args, err)
+			}
+			m["login_icon"] = icon
 		case "user":
 			if len(args) != 1 {
 				return errors.ErrMalformedDirectiveValue.WithArgs(rd, args, "must contain single value")
@@ -219,6 +228,8 @@ func parseCaddyfileIdentityStore(d *caddyfile.Dispenser, repl *caddy.Replacer, c
 			case "username_recovery":
 			case "password_recovery":
 			case "contact_support":
+			case "full_automatic_group_mapping":
+			case "short_automatic_group_mapping":
 			default:
 				return errors.ErrMalformedDirectiveValue.WithArgs(rd, args, "unsupported value")
 			}
