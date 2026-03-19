@@ -6,7 +6,7 @@ LATEST_GIT_COMMIT:=$(shell git log --format="%H" -n 1 | head -1)
 BUILD_USER:=$(shell whoami)
 BUILD_DATE:=$(shell date +"%Y-%m-%d")
 BUILD_DIR:=$(shell pwd)
-CADDY_VERSION="v2.11.1"
+CADDY_VERSION="v2.11.2"
 
 all: info build
 	@echo "$@: complete"
@@ -34,7 +34,7 @@ devbuild:
 		xcaddy build $(CADDY_VERSION) --output ../$(PLUGIN_NAME)/bin/authcrunch \
 		--with github.com/greenpau/caddy-security@$(LATEST_GIT_COMMIT)=$(BUILD_DIR) \
 		--with github.com/greenpau/caddy-trace@latest \
-		--with github.com/greenpau/go-authcrunch@v1.1.24=/Users/greenpau/dev/src/github.com/greenpau/go-authcrunch
+		--with github.com/greenpau/go-authcrunch@v1.1.26=/Users/greenpau/dev/src/github.com/greenpau/go-authcrunch
 	@go build -v -o ./bin/authcrunch cmd/authcrunch/main.go;
 	@./bin/authcrunch version
 	@echo "$@: complete"
@@ -94,16 +94,18 @@ qtest: covdir
 	@#time richgo test -v -coverprofile=.coverage/coverage.out -run TestParseCaddyfileAppConfig ./*.go
 	@#time richgo test -v -coverprofile=.coverage/coverage.out -run TestParseCaddyfileIdentity ./*.go
 	@#time richgo test -v -coverprofile=.coverage/coverage.out -run TestParseCaddyfileSingleSignOnProvider ./*.go
-	@time richgo test -v -coverprofile=.coverage/coverage.out -run TestParseCaddyfileAuthenticationMisc ./*.go
+	@#time richgo test -v -coverprofile=.coverage/coverage.out -run TestParseCaddyfileAuthenticationMisc ./*.go
 	@#time richgo test -v -coverprofile=.coverage/coverage.out -run TestParseCaddyfileCredentials ./*.go
 	@#time richgo test -v -coverprofile=.coverage/coverage.out -run TestParseCaddyfileMessaging ./*.go
 	@#time richgo test -v -coverprofile=.coverage/coverage.out -run TestParseCaddyfileIdentit* ./*.go
 	@#time richgo test -v -coverprofile=.coverage/coverage.out -run TestParseCaddyfileAuthentication ./*.go
 	@#time richgo test -v -coverprofile=.coverage/coverage.out -run TestParseCaddyfileAuthorization ./*.go
+	@time richgo test -v -coverprofile=.coverage/coverage.out -run TestCaddyfileAdaptAuthenticationToJSON ./*.go
 	@#go test -v -coverprofile=.coverage/coverage.out -run TestParseCaddyfile ./*.go
 	@#go test -v -coverprofile=.coverage/coverage.out -run Test* ./pkg/services/...
-	@go tool cover -html=.coverage/coverage.out -o .coverage/coverage.html
-	@go tool cover -func=.coverage/coverage.out | grep -v "100.0"
+	@#go tool cover -html=.coverage/coverage.out -o .coverage/coverage.html
+	@go tool cover -html=.coverage/coverage.out -o .coverage/coverage.html;
+	@#go tool cover -func=.coverage/coverage.out | grep -v "100.0"
 	@echo "$@: complete"
 
 .PHONY: dep
