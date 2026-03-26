@@ -8,7 +8,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/greenpau/caddy-security v1.1.32
 	github.com/greenpau/caddy-trace v1.1.13
-	github.com/greenpau/go-authcrunch v1.1.28
+	github.com/greenpau/go-authcrunch v1.1.29
 	github.com/tidwall/gjson v1.18.0
 	go.uber.org/zap v1.27.1
 )
@@ -64,6 +64,7 @@ require (
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-sql-driver/mysql v1.8.1 // indirect
 	github.com/golang-jwt/jwt/v4 v4.5.2 // indirect
+	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
 	github.com/google/cel-go v0.27.0 // indirect
