@@ -1,6 +1,6 @@
 ---
 name: configuration-authentication
-description: "caddy-security authentication portal Caddyfile configuration. Use when creating, reviewing, or modifying security authentication portal blocks, route-level authenticate directives, portal crypto, enabled identity stores, OAuth or SAML identity providers, SSO app providers, trusted redirects, source address validation, or portal wiring. For cookies, UI, and user transforms use the focused authentication subskills."
+description: "Configure authentication portals, backend selection, redirect trust, refresh, and portal wiring. Delegates cookies, UI, transforms, crypto, and OIDC provider details to focused skills."
 ---
 
 # Configuration Authentication
@@ -10,15 +10,20 @@ description: "caddy-security authentication portal Caddyfile configuration. Use 
 Use this skill to configure `authentication portal <name>` blocks and the
 route-level `authenticate with <portal>` handler.
 
-Use `configuration-http-integrations` for route placement, matcher forms,
-same-host or split-host portal wiring, portal/protected route separation, and
-directive-order guardrails when attaching the portal to HTTP routes.
+Use [configuration-http-integrations](../configuration-http-integrations/SKILL.md)
+to place portal routes, select matchers, wire same-host or split-host portals,
+separate portal/protected routes, and check directive ordering.
 
 Read these files when details matter:
 
 - `caddyfile_authn.go` for the portal block.
+- `caddyfile_authn_token_refresh.go` and [token refresh](references/token-refresh.md)
+  for readable portal refresh configuration, explicit local realms, transports,
+  bounded lifetimes and stores, cookies, placeholders and TLS validation.
 - `caddyfile_authn_crypto.go` for crypto key directives.
 - `caddyfile_authn_misc.go` for `enable`, `validate`, and `trust`.
+- `caddyfile_authn_admin_api.go` and selected upstream
+  `pkg/authn/admin_api/parser` for the independent admin/API key-export switches.
 - `plugin_authn.go` for route-level `authenticate` syntax.
 - `../go-authcrunch/config.go` for portal
   validation, default backend attachment, and user registration wiring.
@@ -26,40 +31,57 @@ Read these files when details matter:
   `../go-authcrunch/pkg/authn/portal.go` for
   portal defaults and runtime behavior.
 
-Use focused sibling skills for specialized portal sub-blocks:
+Use focused repo-local skills for specialized portal sub-blocks:
 
-- `configuration-crypto` for portal `crypto` defaults, JWT signing keys,
-  auto-generated keys, token names and lifetimes, secret-backed key material,
-  and System API `system` keys.
-- `configuration-authentication-cookies` for `cookie` and token-cookie naming.
-- `configuration-authentication-ui` for `ui` blocks, templates, static assets,
-  custom CSS/JS/HTML, themes, languages, logos, and private links.
-- `configuration-authentication-user-transforms` for `transform user` blocks,
-  ACL matchers, transform actions, challenges, claim replacements, and UI links
-  emitted by transforms.
-- `configuration-saml-providers` for `saml identity provider <name>` login
-  providers enabled by the portal.
-- `authentication-portal-api` for JSON login, `/whoami`, `/beacon`, refresh
-  token, and admin/server API endpoint behavior.
+- Use [configuration-authentication-cross-device](../configuration-authentication-cross-device/SKILL.md)
+  to enable QR/link login, explicit approval, browser binding, cancellation and
+  volatile request lifecycle through the existing portal route.
+- Use [configuration-oauth-applications](../configuration-oauth-applications/SKILL.md)
+  to configure portal `oidc provider` blocks, named client selection, private
+  registrations, and dedicated provider signing keys.
+  Its [provider reference](../configuration-oauth-applications/references/oidc-provider.md)
+  covers explicit realm participation and separate issuers/cookie scopes across
+  portals; attaching a store for portal login does not enable its realm for OIDC.
+- Use [configuration-crypto](../configuration-crypto/SKILL.md) to configure
+  portal `crypto` defaults, JWT signing keys, auto-generated keys, token names
+  and lifetimes, secret-backed key material, and System API `system` keys.
+- Use [configuration-authentication-cookies](../configuration-authentication-cookies/SKILL.md)
+  to configure `cookie` directives and token-cookie naming.
+- Use [configuration-authentication-ui](../configuration-authentication-ui/SKILL.md)
+  to configure `ui` blocks, templates, static assets, custom CSS/JS/HTML, themes,
+  languages, logos, and private links.
+- Use [configuration-authentication-user-transforms](../configuration-authentication-user-transforms/SKILL.md)
+  to configure `transform user` blocks, ACL matchers, typed claims, conditional
+  challenge selection, additive legacy requirements, claim replacements, and
+  transform UI links. Persisted local-user challenge rules belong to
+  [configuration-users](../configuration-users/SKILL.md).
+- Use [configuration-saml-providers](../configuration-saml-providers/SKILL.md)
+  to configure `saml identity provider <name>` login providers enabled by the portal.
+- Use [authentication-portal-api](../authentication-portal-api/SKILL.md) to build
+  or troubleshoot JSON login, `/whoami`, `/beacon`, refresh token, and admin/server
+  API interactions.
 
 ## Shape
 
 ```caddyfile
-security {
-	local identity store localdb {
-		realm local
-		path assets/config/users.json
-	}
+{
+	security {
+		local identity store localdb {
+			realm local
+			path assets/config/users.json
+		}
 
-	authentication portal myportal {
-		crypto default token lifetime 3600
-		crypto key sign-verify {env.JWT_SHARED_KEY}
-		enable identity store localdb
+		authentication portal myportal {
+			crypto default token lifetime 3600
+			crypto key sign-verify {env.JWT_SHARED_KEY}
+			enable identity store localdb
+		}
 	}
 }
 
 example.com {
-	route /auth* {
+	@portal path /auth /auth/*
+	route @portal {
 		authenticate with myportal
 	}
 }
@@ -68,6 +90,11 @@ example.com {
 The portal name must match the `authenticate with <portal>` reference.
 Route-level syntax also allows a matcher: `authenticate @matcher with
 <portal>`.
+
+Use `myportal` or a descriptive name such as `employee_portal` in examples,
+fixtures, and tests. Avoid naming a portal `portal`: the repeated words in
+`authentication portal portal` are confusing. Keep references consistent, for
+example `authentication portal myportal` and `authenticate with myportal`.
 
 ## Portal Wiring
 
@@ -96,8 +123,7 @@ User registration is global authcrunch config. A `user registration <name>`
 block names its target identity store; authcrunch validates that store, marks it
 registration-enabled, and attaches the registry to any portal that has that
 identity store enabled. Do not generate an `enable user registration <name>`
-portal line: the current `enable` parser does not accept it even though an old
-syntax comment still mentions it.
+portal line: the current `enable` parser does not accept it.
 
 ## Common Portal Options
 
@@ -121,7 +147,10 @@ trust logout redirect uri domain example.com path /
 ```
 
 The match type is optional and defaults to `exact`; supported match types are
-`exact`, `partial`, `prefix`, `suffix`, and `regex`.
+`exact`, `partial`, `prefix`, `suffix`, and `regex`. Both `domain` and `path`
+need values. Keep `login`/`logout`, `redirect`, and `uri` as separate header
+tokens. Quoted domain/path values remain data even when they contain those
+words; they cannot change which redirect trust list receives the rule.
 
 Enable admin/server API endpoints only when they are needed and protected by
 an authenticated admin session:
@@ -129,6 +158,11 @@ an authenticated admin session:
 ```caddyfile
 enable admin api
 ```
+
+Both `enable` and `disable` are supported for `admin api` and
+`admin api private key export`. Each setting occurs at most once in the portal;
+both default to disabled. Key export does not implicitly enable the API and
+requires both flags plus authenticated admin authorization at runtime.
 
 See `authentication-portal-api` for `/api/server/metadata`,
 `/api/server/realms`, `/api/server/info`, JSON login, `/beacon`, and `/whoami`
@@ -149,3 +183,20 @@ Use these fixtures as examples:
 
 - `testdata/caddyfile_adapt/testcase_security_authentication_portal.Caddyfile`
 - `testdata/caddyfile_adapt/testcase_authenticate_with_registration.Caddyfile`
+
+`TestParseCaddyfileRedirectTrustMalformed` and
+`TestParseCaddyfileRedirectTrustValues` cover incomplete selectors and quoted
+values. `testcase_authenticate_with_redirect_trust_malformed` must fail adaptation
+with a parser error, not a panic. The redirect-trust subtest in
+`TestCaddyOAuthE2E` verifies separate login/logout behavior over TLS and confirms
+that rejected reconfiguration leaves the running portal usable.
+
+## Acceptance criteria
+
+- A portal with explicitly selected, enabled backends serves login at its exact
+  mount; a disabled or unknown backend is rejected rather than silently replaced.
+- Trusted redirect rules retain their intended login/logout scope and matcher
+  semantics after adaptation and runtime replacement.
+- Refresh/OIDC participation is explicit per local realm. A portal-only syntax
+  fixture does not qualify renewal, provider exchanges, or durable restart;
+  those outcomes use the linked feature's Caddy unit and E2E evidence.

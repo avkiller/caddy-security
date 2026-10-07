@@ -22,6 +22,7 @@ import (
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
 	"github.com/google/go-cmp/cmp"
+	"github.com/greenpau/go-authcrunch/pkg/authn"
 	"github.com/tidwall/gjson"
 )
 
@@ -81,6 +82,10 @@ func TestParseCaddyfileAuthenticationMisc(t *testing.T) {
 								"identity_token_cookie_name": "AUTHP_ID_TOKEN",
 								"access_token_cookie_name": "AUTHP_ACCESS_TOKEN",
 								"refresh_token_cookie_name": "AUTHP_REFRESH_TOKEN",
+								"oidc_session_id_cookie_name": "AUTHP_OIDC_SESSION_ID",
+								"oidc_request_id_cookie_name": "AUTHP_OIDC_REQUEST_ID",
+								"saml_session_id_cookie_name": "AUTHP_SAML_SESSION_ID",
+								"cross_device_session_id_cookie_name": "AUTHP_CROSS_DEVICE_SESSION_ID",
 								"cookie_name_prefix": "AUTHP"
 							},
 							"crypto_key_store_config": {
@@ -156,5 +161,54 @@ func TestParseCaddyfileAuthenticationMisc(t *testing.T) {
 				t.Errorf("TestParseCaddyfileAuthenticationMisc() mismatch (-want +got):\n%s", diff)
 			}
 		})
+	}
+}
+
+func TestParseCaddyfileRedirectTrustMalformed(t *testing.T) {
+	for _, body := range []string{
+		"login redirect uri domain", "logout redirect uri path",
+		"login redirect uri domain example.test path", "logout redirect uri path / domain",
+		"login redirect uri domain exact", "logout redirect uri path prefix",
+		"login redirect uri domain example.test path exact", "logout redirect uri path / domain exact",
+		"notlogin redirect uri domain example.test path /", "notlogout redirect uri domain example.test path /",
+		"prefix login redirect uri domain example.test path /",
+		`"login redirect uri" domain example.test path /`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			d := caddyfile.NewTestDispenser("trust " + body)
+			d.Next()
+			portal := &authn.PortalConfig{}
+			if err := parseCaddyfileAuthPortalMisc(d, portal, "security.authentication.portal.trust", "trust", d.RemainingArgs()); err == nil {
+				t.Fatal("malformed redirect trust accepted")
+			}
+			if len(portal.TrustedLoginRedirectURIConfigs)+len(portal.TrustedLogoutRedirectURIConfigs) != 0 {
+				t.Fatal("malformed redirect trust partially registered")
+			}
+		})
+	}
+}
+
+func TestParseCaddyfileRedirectTrustValues(t *testing.T) {
+	for _, scope := range []string{"login", "logout"} {
+		for _, path := range []string{"/login redirect uri", "/logout redirect uri"} {
+			t.Run(scope+path, func(t *testing.T) {
+				d := caddyfile.NewTestDispenser(`trust ` + scope + ` redirect uri domain example.test path "` + path + `"`)
+				d.Next()
+				portal := &authn.PortalConfig{}
+				if err := parseCaddyfileAuthPortalMisc(d, portal, "security.authentication.portal.trust", "trust", d.RemainingArgs()); err != nil {
+					t.Fatal(err)
+				}
+				selected, other := portal.TrustedLoginRedirectURIConfigs, portal.TrustedLogoutRedirectURIConfigs
+				if scope == "logout" {
+					selected, other = other, selected
+				}
+				if len(selected) != 1 || len(other) != 0 {
+					t.Fatal("quoted path changed the redirect trust scope")
+				}
+				if selected[0].Domain != "example.test" || selected[0].Path != path || selected[0].DomainMatchType != "exact" || selected[0].PathMatchType != "exact" {
+					t.Fatal("redirect values or default match types changed")
+				}
+			})
+		}
 	}
 }

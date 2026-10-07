@@ -18,57 +18,54 @@ import (
 	"strings"
 
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
-	"github.com/greenpau/go-authcrunch"
 	"github.com/greenpau/go-authcrunch/pkg/authn"
-	"github.com/greenpau/go-authcrunch/pkg/authn/cookie"
+	crossdeviceparser "github.com/greenpau/go-authcrunch/pkg/authn/cross_device/parser"
 	"github.com/greenpau/go-authcrunch/pkg/authn/ui"
 	"github.com/greenpau/go-authcrunch/pkg/authz/options"
 	"github.com/greenpau/go-authcrunch/pkg/errors"
+	cfgutil "github.com/greenpau/go-authcrunch/pkg/util/cfg"
 )
 
 const (
 	authnPrefix = "security.authentication"
 )
 
-// parseCaddyfileAuthentication parses authentication configuration.
+// parseCaddyfileAuthentication parses an authentication portal in security.
+// See the caddyfile_authn_* helpers for the full grammar of each subdirective.
+// Cookie and admin API statements are collected across the complete portal and
+// validated by their shared go-authcrunch parsers, including alias collisions.
 //
 // Syntax:
 //
-//	  authentication portal <name> {
-//
+//	authentication portal <name> {
 //		crypto key sign-verify <shared_secret>
-//
-//		ui {
-//			template <login|portal> <file_path>
-//			logo_url <file_path|url_path>
-//			logo_description <value>
-//			custom css path <path>
-//			custom js path <path>
-//			custom html header path <path>
-//			static_asset <uri> <content_type> <path>
-//			allow settings for role <role>
-//		}
-//
-//	    cookie domain <name>
-//	    cookie path <name>
-//	    cookie lifetime <seconds>
-//	    cookie samesite <lax|strict|none>
-//	    cookie insecure <on|off>
-//	    set <session_id|redirect_url|sandbox_id|id_token|access_token|refresh_token> cookie name <name>
-//
-//	    validate source address
-//
-//	    enable source ip tracking
-//	    enable admin api
-//	    enable identity store <name>
-//	    enable identity provider <name>
-//	    enable sso provider <name>
-//	    enable user registration <name>
-//
-//		trust [login|logout] redirect uri domain [exact|partial|prefix|suffix|regex] <domain_name> path [exact|partial|prefix|suffix|regex] <path>
-//
+//		oidc provider { ... }
+//		token refresh { ... }
+//		ui { ... }
+//		transform user { ... }
+//		cookie prefix <prefix>
+//		cookie access token name <name>
+//		validate source address
+//		enable source ip tracking
+//		<enable|disable> admin api
+//		<enable|disable> admin api private key export
+//		<enable|disable> cross-device login
+//		enable identity store <name> [<name>...]
+//		enable identity provider <name> [<name>...]
+//		enable sso provider <name> [<name>...]
+//		trust <login|logout> redirect uri domain [exact|partial|prefix|suffix|regex] <domain> path [exact|partial|prefix|suffix|regex] <path>
 //	}
-func parseCaddyfileAuthentication(d *caddyfile.Dispenser, cfg *authcrunch.Config) error {
+//
+// Registration is configured with user registration in security and attached to
+// an identity store; there is no enable user registration portal directive.
+// Cross-device login is omitted/disabled by default. Collect its complete
+// statements before shared validation so imports cannot override a prior choice.
+//
+// The optional, single oidc provider block is collected by
+// readCaddyfileOIDCProvider and attached before AddAuthenticationPortal validates
+// the completed portal. The global parser registers all applications first,
+// including declarations following this portal or expanded from later imports.
+func parseCaddyfileAuthentication(d *caddyfile.Dispenser, app *App) error {
 	// rootDirective is config key prefix.
 	var rootDirective string
 	args := d.RemainingArgs()
@@ -82,26 +79,51 @@ func parseCaddyfileAuthentication(d *caddyfile.Dispenser, cfg *authcrunch.Config
 			UI: &ui.Parameters{
 				Templates: make(map[string]string),
 			},
-			CookieConfig:          cookie.NewConfig(),
 			TokenValidatorOptions: &options.TokenValidatorOptions{},
 			TokenGrantorOptions:   &options.TokenGrantorOptions{},
 			API: &authn.APIConfig{
 				ProfileEnabled: true,
 			},
 		}
-		for nesting := d.Nesting(); d.NextBlock(nesting); {
+		var cookieStatements []string
+		var adminStatements []string
+		var oidcStatements []string
+		var tokenRefreshStatements []string
+		var crossDeviceStatements []string
+		nesting := d.Nesting()
+		for d.NextBlock(nesting) {
 			k := d.Val()
 			v := d.RemainingArgs()
 			rootDirective = mkcp(authnPrefix, args[0], k)
 			switch k {
+			case "token":
+				if tokenRefreshStatements != nil {
+					return d.Errf("token refresh is already configured for portal %q", p.Name)
+				}
+				statements, err := readCaddyfileTokenRefresh(d, v)
+				if err != nil {
+					return err
+				}
+				tokenRefreshStatements = statements
+			case "oidc":
+				if oidcStatements != nil {
+					return d.Errf("oidc provider is already configured for portal %q", p.Name)
+				}
+				statements, err := readCaddyfileOIDCProvider(d, v)
+				if err != nil {
+					return err
+				}
+				oidcStatements = statements
 			case "crypto":
 				if err := parseCaddyfileAuthPortalCrypto(d, p, rootDirective, v); err != nil {
 					return err
 				}
-			case "cookie":
-				if err := parseCaddyfileAuthPortalCookie(d, p, rootDirective, v); err != nil {
-					return err
+			case "cookie", "set":
+				statement, err := encodePortalCookieDirective(k, v, true)
+				if err != nil {
+					return d.Errf("%s: %v", rootDirective, err)
 				}
+				cookieStatements = append(cookieStatements, statement)
 			case "ui":
 				if err := parseCaddyfileAuthPortalUI(d, p, rootDirective); err != nil {
 					return err
@@ -110,16 +132,117 @@ func parseCaddyfileAuthentication(d *caddyfile.Dispenser, cfg *authcrunch.Config
 				if err := parseCaddyfileAuthPortalTransform(d, p, rootDirective, v); err != nil {
 					return err
 				}
-			case "enable", "validate", "trust", "set":
+			case "enable", "disable":
+				if len(v) > 0 && strings.HasPrefix(v[0], "cross-device") {
+					for _, arg := range v {
+						// EncodeArgs can discard empty fields. Reject them before
+						// encoding and leave all grammar to the shared constructor.
+						if strings.TrimSpace(arg) == "" || strings.ContainsAny(arg, "\r\n") {
+							return d.Errf("cross-device login: empty or multiline argument")
+						}
+					}
+					if d.Next() {
+						hasBlock := d.Val() == "{" && !d.Token().Quoted()
+						d.Prev()
+						if hasBlock {
+							return d.Errf("cross-device login directives do not accept blocks")
+						}
+					}
+					crossDeviceStatements = append(crossDeviceStatements, cfgutil.EncodeArgs(append([]string{k}, v...)))
+					continue
+				}
+				if k == "enable" && len(v) > 0 && !strings.HasPrefix(v[0], "admin") {
+					if err := parseCaddyfileAuthPortalMisc(d, p, rootDirective, k, v); err != nil {
+						return err
+					}
+					continue
+				}
+				statement, err := encodePortalAdminAPIDirective(k, v)
+				if err != nil {
+					return d.Errf("%s: %v", rootDirective, err)
+				}
+				// Admin settings are statements, never nested blocks.
+				if d.Next() {
+					hasBlock := d.Val() == "{"
+					d.Prev()
+					if hasBlock {
+						return d.Errf("%s: admin API directives do not accept blocks", rootDirective)
+					}
+				}
+				adminStatements = append(adminStatements, statement)
+			case "validate", "trust":
 				if err := parseCaddyfileAuthPortalMisc(d, p, rootDirective, k, v); err != nil {
 					return err
 				}
 			default:
+				// A split or malformed continuation must not echo arguments from
+				// a pending feature statement before aggregate validation runs.
+				if crossDeviceStatements != nil {
+					return d.Errf("unsupported authentication portal directive following cross-device login")
+				}
+				// A quoted joined header is not a directive. Keep its error
+				// redacted just like errors from the shared feature parser.
+				if (strings.HasPrefix(k, "enable") || strings.HasPrefix(k, "disable")) && strings.Contains(k, "cross-device") {
+					return d.Errf("invalid cross-device login directive")
+				}
 				return errors.ErrMalformedDirective.WithArgs(rootDirective, v)
 			}
 		}
+		// A truncated segment must not let a child's closing brace also satisfy
+		// this portal's boundary merely because NextBlock reached EOF.
+		if d.Nesting() != nesting {
+			return d.Errf("unterminated authentication portal block")
+		}
 
-		if err := cfg.AddAuthenticationPortal(p); err != nil {
+		if err := configurePortalAdminAPI(p, adminStatements); err != nil {
+			return d.Errf("%s.portal %q admin API: %v", authnPrefix, p.Name, err)
+		}
+
+		if tokenRefreshStatements != nil {
+			if cookieDirectivesNeedResolution(tokenRefreshStatements) {
+				if app.PortalTokenRefreshDirectives == nil {
+					app.PortalTokenRefreshDirectives = make(map[string][]string)
+				}
+				if _, exists := app.PortalTokenRefreshDirectives[p.Name]; exists {
+					return d.Errf("duplicate token refresh portal %q", p.Name)
+				}
+				app.PortalTokenRefreshDirectives[p.Name] = tokenRefreshStatements
+			} else if err := configurePortalTokenRefresh(p, tokenRefreshStatements); err != nil {
+				return d.Errf("portal %q token refresh: %v", p.Name, err)
+			}
+		}
+		// Refresh may override the shared refresh cookie name. Resolve that choice
+		// before the shared cookie parser checks the effective names for collisions.
+		// Preserve both complete snapshots across Caddy JSON when refresh is deferred,
+		// even if the cookie directives themselves contain no placeholders.
+		if cookieDirectivesNeedResolution(cookieStatements) || cookieDirectivesNeedResolution(tokenRefreshStatements) {
+			if app.PortalCookieDirectives == nil {
+				app.PortalCookieDirectives = make(map[string][]string)
+			}
+			if _, exists := app.PortalCookieDirectives[p.Name]; exists {
+				return d.Errf("duplicate cookie portal %q", p.Name)
+			}
+			app.PortalCookieDirectives[p.Name] = cookieStatements
+		} else if err := configurePortalCookies(p, cookieStatements); err != nil {
+			return d.Errf("%s.portal %q cookies: %v", authnPrefix, p.Name, err)
+		}
+		if oidcStatements != nil {
+			if err := app.Config.ConfigureOIDCProvider(p, oidcStatements); err != nil {
+				return d.Errf("%s.portal %q oidc provider: %v", authnPrefix, p.Name, err)
+			}
+			if app.OIDCProviderDirectives == nil {
+				app.OIDCProviderDirectives = make(map[string][]string)
+			}
+			app.OIDCProviderDirectives[p.Name] = oidcStatements
+		}
+		if crossDeviceStatements != nil {
+			config, err := crossdeviceparser.NewCrossDeviceLoginConfigFromDirectives(crossDeviceStatements)
+			if err != nil {
+				return d.Errf("portal %q cross-device login: %v", p.Name, err)
+			}
+			p.CrossDeviceLogin = config
+		}
+		if err := app.Config.AddAuthenticationPortal(p); err != nil {
 			return err
 		}
 	default:

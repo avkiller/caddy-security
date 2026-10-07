@@ -23,6 +23,33 @@ import (
 	"github.com/greenpau/go-authcrunch/pkg/authn/ui"
 )
 
+// parseCaddyfileAuthPortalUI parses UI settings inside an authentication portal.
+//
+// Syntax:
+//
+//	ui {
+//		template <template_name> <file_path>
+//		theme basic
+//		language <language>
+//		meta <title|author|description> <value>
+//		logo <url|description> <value>
+//		auto_redirect_url <url>
+//		custom css [path] <path>
+//		custom js [path] <path>
+//		custom html header path <path>
+//		static_asset <assets/URI> <media_type> <path>
+//		links {
+//			<title> <url> [target_blank] [icon <class>] [disabled]
+//		}
+//	}
+//
+// Quote multiword values. Use image/png or image/jpeg for image media types.
+// basic is the only registered theme in v1.3.3. Embedded pages handle browser
+// color preferences without additional Caddy directives. Profile image assets
+// use SVG; custom static PNG assets remain supported.
+// Template names, themes, and languages depend on go-authcrunch/pkg/authn/ui
+// and pkg/translate. custom html header reads its file during adaptation.
+// There are no logo_url, logo_description, or allow settings directives.
 func parseCaddyfileAuthPortalUI(h *caddyfile.Dispenser, portal *authn.PortalConfig, rootDirective string) error {
 	for nesting := h.Nesting(); h.NextBlock(nesting); {
 		subDirective := h.Val()

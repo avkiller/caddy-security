@@ -1,6 +1,6 @@
 ---
 name: configuration-crypto
-description: "caddy-security crypto directive configuration for authentication portals and authorization policies. Use when creating, reviewing, or debugging crypto Caddyfile lines, JWT signing or verification keys, token names and lifetimes, key IDs, HMAC/RSA/ECDSA key loading, auto-generated keys, env or secrets-backed crypto values, System API crypto keys for remote Basic/API-key authentication, and authenticate/authorize key compatibility."
+description: "Configure portal/policy JWT keys, token names and lifetimes, key loading and generation, public-key discovery, and System API encryption keys. Use for signing/verification compatibility and rotation."
 ---
 
 # Configuration Crypto
@@ -9,10 +9,12 @@ description: "caddy-security crypto directive configuration for authentication p
 
 Use this skill for `crypto` directives inside
 `authentication portal <name>` and `authorization policy <name>` blocks.
-Use it together with `configuration-authentication` or
-`configuration-authorization` for the surrounding portal or policy, and with
-`configuration-runtime-resolution` or `configuration-secrets` when values come
-from `{env.*}`, `{file.*}`, or `secrets:*:*`.
+Surrounding declarations belong to
+[configuration-authentication](../configuration-authentication/SKILL.md) and
+[configuration-authorization](../configuration-authorization/SKILL.md).
+[runtime resolution](../configuration-runtime-resolution/SKILL.md) and
+[secrets](../configuration-secrets/SKILL.md) own replacement semantics and manager
+configuration; this skill owns how the resulting key material is used.
 
 Read these files when details matter:
 
@@ -44,9 +46,11 @@ That builds `CryptoKeyStoreConfig`; runtime then builds a `CryptoKeyStore` from
 that config.
 
 If no explicit `crypto key ...` lines exist, authcrunch auto-generates an ES512
-`sign-verify` key. That is useful for single-process local setups. Prefer
-explicit keys for stable deployments, multiple Caddy instances, restarts where
-old tokens should survive, or any portal and policy split across instances.
+`sign-verify` key by default; other algorithms are described below. This is
+volatile by default. Explicit keys provide stable material across independent
+instances; optional [persistent state](../configuration-state/SKILL.md) can retain
+generated material across an exclusive owner's stop/start. Key persistence alone
+does not share session state or authorize concurrent owners.
 
 ## Common Pairing
 
@@ -55,17 +59,19 @@ portal with sign-capable material and the policy with matching verify-capable
 material:
 
 ```caddyfile
-security {
-	authentication portal myportal {
-		crypto default token lifetime 3600
-		crypto key sign-verify {env.JWT_SHARED_KEY}
-		enable identity store localdb
-	}
+{
+	security {
+		authentication portal myportal {
+			crypto default token lifetime 3600
+			crypto key sign-verify {env.JWT_SHARED_KEY}
+			enable identity store localdb
+		}
 
-	authorization policy app_policy {
-		crypto key verify {env.JWT_SHARED_KEY}
-		set auth url /auth
-		allow roles authp/admin authp/user
+		authorization policy app_policy {
+			crypto key verify {env.JWT_SHARED_KEY}
+			set auth url /auth
+			allow roles authp/admin authp/user
+		}
 	}
 }
 ```
@@ -84,7 +90,7 @@ stores and resolves them:
 crypto default token name <TOKEN_NAME>
 crypto default token lifetime <SECONDS>
 crypto default autogenerate tag <TAG>
-crypto default autogenerate algorithm ES512
+crypto default autogenerate algorithm <ES512|EdDSA|Ed25519>
 
 crypto key token name <TOKEN_NAME>
 crypto key token lifetime <SECONDS>
@@ -126,13 +132,18 @@ verify-capable keys; it does not select a verification key solely from the JWT
 The default token name is `access_token`. The default lifetime is `900`
 seconds. `crypto default token lifetime <SECONDS>` applies to explicit keys
 unless a key-specific `crypto key ... token lifetime ...` overrides it. If only
-defaults are present and no explicit key exists, the auto-generated ES512 key
+defaults are present and no explicit key exists, the auto-generated key
 uses those defaults.
 
-The auto-generation defaults are tag `default` and algorithm `ES512`. The
-auto-generation tag is stored in authcrunch's shared in-memory key buffer, so
-objects in the same process can share the generated key. Do not rely on it
-across independent Caddy instances.
+Auto-generation defaults to tag `default` and algorithm `ES512`. It also
+accepts `EdDSA` and `Ed25519`, which generate Ed25519 material and select the
+respective JOSE signing label. Use a distinct tag when changing key families;
+reuse with an incompatible algorithm is rejected. The auto-generation tag
+identifies material shared within the runtime. With no state directory that
+material is volatile; with explicit state the generated-key record survives
+restart. `TestCaddyRuntimeStateE2E` verifies unchanged public JWKS and old JWT
+verification after SIGKILL. Independent active instances still need deliberately
+coordinated keys and cannot concurrently own the same state directory.
 
 ## Key Material
 
@@ -144,8 +155,8 @@ crypto key sign-verify {env.JWT_SHARED_KEY}
 crypto key verify {env.JWT_SHARED_KEY}
 ```
 
-Use PEM files for RSA and ECDSA keys. Supported file extensions are `.pem` and
-`.key`. RSA supports `RS512`, `RS384`, and `RS256`. ECDSA supports P-256,
+Use PEM files for RSA, ECDSA, and Ed25519 keys. Supported file extensions are
+`.pem` and `.key`. RSA supports `RS512`, `RS384`, and `RS256`. ECDSA supports P-256,
 P-384, and P-521 curves, mapped to `ES256`, `ES384`, and `ES512`. A private
 key can sign and, unless usage is exactly `sign`, verify through its public
 key. A public key can only verify.
@@ -160,8 +171,31 @@ When loading a directory, KMS reads `.pem` and `.key` files and derives each
 key ID from the filename, normalized to lowercase letters, digits, `_`, and
 `-`. The configured `<KID>` on the directory line is not retained for each file.
 
+Ed25519 uses PKCS#8 `PRIVATE KEY` PEM for signing and SPKI `PUBLIC KEY` PEM
+for verification. Both `EdDSA` and `Ed25519` JOSE labels are supported; imported
+private keys prefer `EdDSA`. A public Ed25519 key with `sign` usage is rejected.
+With `verify`, `sign-verify`, or `auto`, public PEM loads only a verifier and
+does not enable signing or public discovery. An Ed25519 private key configured
+with `verify` also contributes only a verifier. These KMS keys issue/verify
+portal tokens; upstream OAuth `jwks key` pins use a separate loader with
+different accepted key formats.
+
+There is no crypto directive to relabel an imported key as `Ed25519`. PEM
+persists material, not a JOSE preference: exporting a generated `Ed25519` key
+and reimporting it uses `EdDSA` for new tokens. Both exact labels verify with
+the same public key. Do not rewrite signed headers or extend OP ID-token
+signing algorithms to configure portal access tokens.
+
+Public signing-key discovery accepts `GET` or `HEAD` at
+`<mount>/.well-known/jwks.json` without an enable directive or admin access.
+See [public discovery](../authentication-portal-api/SKILL.md#public-signing-key-discovery)
+for selection and response rules, and
+[HTTP routing](../configuration-http-integrations/SKILL.md#public-jwks-routing)
+for exact mount boundaries ahead of a protected catch-all.
+
 Unsupported material includes certificates, malformed PEM, unsupported ECDSA
-curves, DSA, and EdDSA keys.
+curves, and DSA. See selected upstream `pkg/kms/ed25519.go`,
+`crypto_key.go`, and `ed25519_test.go` for Ed25519 material and label behavior.
 
 ## Env And Secrets
 
@@ -183,25 +217,29 @@ when the env var holds a shared secret or PEM content.
 Use secrets manager lookups as direct values, not as `from env`:
 
 ```caddyfile
-security {
-	secrets static_secrets_manager access_token {
-		shared_secret {env.JWT_SHARED_KEY}
-	}
+{
+	security {
+		secrets static_secrets_manager access_token {
+			shared_secret {env.JWT_SHARED_KEY}
+		}
 
-	authentication portal myportal {
-		crypto key sign-verify "secrets:access_token:shared_secret"
-	}
+		authentication portal myportal {
+			crypto key sign-verify "secrets:access_token:shared_secret"
+		}
 
-	authorization policy app_policy {
-		crypto key verify "secrets:access_token:shared_secret"
-		allow roles authp/user
+		authorization policy app_policy {
+			crypto key verify "secrets:access_token:shared_secret"
+			allow roles authp/user
+		}
 	}
 }
 ```
 
-The resolved value must be the exact string KMS expects: a shared secret, PEM
-content, a PEM path only when using the `from file` form, or a System API hex
-key for `system` usage.
+Direct `crypto key ... <value>` selects HMAC (or System API hex material for
+`system` usage). Do not substitute PEM content into that form: it is treated as
+a shared secret. For PEM content use `from env <NAME> as key`; for a PEM path
+use `from file <PATH>` or `from env <NAME> as file`. The resolved value must
+match the selected source form.
 
 ## Token Discovery
 
@@ -210,8 +248,9 @@ user receives `usr.TokenName` from the signing key's token name, while portal
 cookies use the portal cookie factory's access-token cookie name. The portal
 config wires its own validator to the access-token cookie name.
 
-For authorization policies, default cookie names are `access_token` and
-`jwt_access_token`. Default header and query names are also `access_token` and
+For Caddy authorization policies, default cookie names are
+`AUTHP_ACCESS_TOKEN`, `access_token`, and `jwt_access_token`; runtime resolution
+pins this list. Default header and query names retain `access_token` and
 `jwt_access_token`; configured access-token cookie names are additionally added
 as lowercase header and query names.
 
@@ -236,37 +275,10 @@ Use `set token sources cookie header query` to control lookup order. Use
 
 ## System API Keys
 
-`system` keys are not JWT signing keys. They encrypt and decrypt PASETO
-`v4.local` System API messages used by remote Basic/API-key authentication.
-They require a non-empty key ID and a 32-byte key encoded as 64 hex characters.
-
-Configure the same `system` key ID and value on the remote policy and the
-receiving portal:
-
-```caddyfile
-authentication portal myportal {
-	crypto key sys1 system {env.SYSTEM_API_SECRET}
-	enable identity store localdb
-}
-
-authorization policy api_policy {
-	crypto key jwt1 verify {env.JWT_SHARED_KEY}
-	crypto key sys1 system {env.SYSTEM_API_SECRET}
-	allow roles authp/user
-	with api key auth portal https://auth.example.com/auth realm local
-	with basic auth portal https://auth.example.com/auth realm local
-}
-```
-
-For file-backed System API keys, use a Caddy replacer that resolves to the file
-content, such as `crypto key sys1 system {file./etc/caddy/security_system.key}`.
-Do not use `crypto key sys1 system from file ...`; KMS file loading is for PEM
-JWT keys, not raw System API hex keys.
-
-The portal chooses the `system` key from the encrypted message footer `kid`.
-The authorize-side remote authenticator currently picks the first configured
-`system` key in key-store order for remote calls, so keep rotation plans simple
-and test them explicitly.
+Remote Basic/API-key authentication uses matching `system` key IDs and 32-byte
+hex keys on the policy and portal. They encrypt PASETO assertions and do not
+sign JWTs. Read [System API key configuration](references/system-api-keys.md)
+for exact syntax, file-value handling, key selection and challenge-policy limits.
 
 ## Failure Patterns
 
@@ -288,6 +300,16 @@ HTTPS and points at the portal base path, and the client sends the expected
 realm and API-key or Basic credentials headers.
 
 ## Fixtures
+
+`caddyfile_crypto_test.go` checks exact raw adapter forwarding, runtime
+algorithm replacement, legacy defaults/key attributes, and library-owned
+validation. `testcase_authenticate_with_crypto` covers both portal and policy
+adaptation. `TestCaddyJWKSE2E` in `jwks_e2e_test.go` runs real TLS Caddy login,
+independent signature verification from public JWKS, file/directory/env PEM
+loading, exact labels, public routing, gatekeeper trust, private export and
+reimport, and live discovery changes. `TestCaddyJWKSPersistenceE2E` in
+`jwks_persistence_e2e_test.go` checks restart, rotation, and retirement in fresh
+OS processes, plus live verifier retirement after cached authorization.
 
 Use these examples for orientation:
 

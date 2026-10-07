@@ -15,6 +15,7 @@
 package security
 
 import (
+	"context"
 	//	"fmt"
 
 	"github.com/caddyserver/caddy/v2/caddyconfig"
@@ -31,28 +32,143 @@ func init() {
 	httpcaddyfile.RegisterGlobalOption("security", parseCaddyfile)
 }
 
-// parseCaddyfile parses security app configuration.
+// parseCaddyfile parses the security app inside Caddy's global options block.
+// Syntax below lists block headers; their bodies are documented by each parser.
+// Angle brackets denote required values/alternatives, square brackets optional
+// arguments, and ... repetition. Syntax catalogues are not runnable configs.
 //
 // Syntax:
 //
-//	security {
-//		secrets ...
-//		credentials ...
-//		identity store <name>
-//		sso provider <name>
-//		[saml|oauth] identity provider <name>
-//		authentication ...
-//		authorization ...
+//	{
+//		security {
+//			logging { skip <exact|partial|prefix|suffix|regex> text <value> }
+//			state { directory <absolute-private-directory> }
+//			oauth registration store { path <absolute-private-directory> }
+//			secrets <module> <id> { ... }
+//			credentials <name> { ... }
+//			messaging <email|file> provider <name> { ... }
+//			<local|ldap> identity store <name> { ... }
+//			<oauth|saml> identity provider <name> { ... }
+//			oauth application <nickname> { ... }
+//			sso provider <name> { ... }
+//			user registration <name> { ... }
+//			authentication portal <name> { ... }
+//			authorization policy <name> { ... }
+//		}
 //	}
-func parseCaddyfile(d *caddyfile.Dispenser, _ interface{}) (interface{}, error) {
+//
+// Delegated body syntax and validation remain part of the Caddyfile contract.
+// See .codex/skills/configuration/references/syntax-maintenance.md for ownership
+// and the audit workflow when local parsers or upstream dependencies change.
+func parseCaddyfile(d *caddyfile.Dispenser, previous any) (any, error) {
 	app := new(App)
 	app.Config = authcrunch.NewConfig()
 
 	if !d.Next() {
 		return nil, d.ArgErr()
 	}
+	if previous != nil {
+		// Caddy otherwise replaces the entire earlier app, silently losing
+		// its logging rules and other security declarations.
+		return nil, d.Errf("duplicate security block")
+	}
 
+	// Collect the explicit store and application declarations before resolving
+	// portals, regardless of textual order. Storage supplies credentials only.
+	var declarations []*caddyfile.Dispenser
+	type applicationDeclaration struct {
+		d            *caddyfile.Dispenser
+		header, body []string
+	}
+	var applications []applicationDeclaration
 	for d.NextBlock(0) {
+		if d.Val() == "logging" {
+			if app.Config.Logging != nil {
+				return nil, d.Errf("duplicate security logging block")
+			}
+			// Read in place: segment extraction drops empty blocks.
+			if err := parseCaddyfileLogging(d, app.Config); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if d.Val() == "state" {
+			if app.Config.State != nil {
+				return nil, d.Errf("duplicate security state block")
+			}
+			if err := parseCaddyfileState(d, app.Config); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if d.Val() == "oauth" {
+			if !d.NextArg() {
+				return nil, d.Errf("expected oauth application, oauth registration store, or oauth identity provider header")
+			}
+			kind := d.Val()
+			d.Prev()
+			switch kind {
+			case "registration":
+				if app.OAuthRegistrationStore != nil {
+					return nil, d.Errf("duplicate oauth registration store")
+				}
+				cfg, err := parseCaddyfileOAuthRegistrationStore(d)
+				if err != nil {
+					return nil, err
+				}
+				app.OAuthRegistrationStore = cfg
+				continue
+			case "application":
+				// Parse in place: NextSegment omits empty blocks, which would
+				// turn missing credentials into a misleading missing-block error.
+				header, body, err := readOAuthApplication(d)
+				if err != nil {
+					return nil, err
+				}
+				source, _, err := applicationSource(header, body)
+				if err != nil {
+					return nil, d.Errf("%v", err)
+				}
+				if source.Revision == "" {
+					if err := app.addOAuthApplication(context.Background(), header, body); err != nil {
+						return nil, d.Errf("%v", err)
+					}
+				} else {
+					applications = append(applications, applicationDeclaration{d: caddyfile.NewDispenser([]caddyfile.Token{d.Token()}), header: header, body: body})
+					applications[len(applications)-1].d.Next()
+				}
+				continue
+			case "identity":
+				// Resolve identity providers after collecting applications.
+			default:
+				// A malformed/grouped header may contain a misplaced secret.
+				return nil, d.Errf("expected oauth application, oauth registration store, or oauth identity provider header")
+			}
+		}
+		declaration := d.NewFromNextSegment()
+		declaration.Next()
+		declarations = append(declarations, declaration)
+	}
+	// A child parser must not consume this block's closing brace and let EOF
+	// masquerade as a completed security block, including direct Dispenser
+	// callers that have not passed through Caddy's complete-file parser.
+	if d.Nesting() != 0 {
+		return nil, d.Errf("unterminated security block")
+	}
+	if app.OAuthRegistrationStore != nil {
+		store, err := app.OAuthRegistrationStore.open(context.Background())
+		if err != nil {
+			return nil, d.Errf("%v", err)
+		}
+		store.root.Close()
+	}
+	for _, declaration := range applications {
+		if err := app.addOAuthApplication(context.Background(), declaration.header, declaration.body); err != nil {
+			return nil, declaration.d.Errf("%v", err)
+		}
+	}
+
+	for _, d := range declarations {
 		tld := d.Val()
 		switch tld {
 		case "credentials":
@@ -64,7 +180,7 @@ func parseCaddyfile(d *caddyfile.Dispenser, _ interface{}) (interface{}, error) 
 				return nil, err
 			}
 		case "local", "ldap", "oauth", "saml":
-			if err := parseCaddyfileIdentity(d, app.Config, tld); err != nil {
+			if err := parseCaddyfileIdentity(d, app, tld); err != nil {
 				return nil, err
 			}
 		case "user":
@@ -72,11 +188,11 @@ func parseCaddyfile(d *caddyfile.Dispenser, _ interface{}) (interface{}, error) 
 				return nil, err
 			}
 		case "authentication":
-			if err := parseCaddyfileAuthentication(d, app.Config); err != nil {
+			if err := parseCaddyfileAuthentication(d, app); err != nil {
 				return nil, err
 			}
 		case "authorization":
-			if err := parseCaddyfileAuthorization(d, app.Config); err != nil {
+			if err := parseCaddyfileAuthorization(d, app); err != nil {
 				return nil, err
 			}
 		case "sso":
@@ -88,10 +204,15 @@ func parseCaddyfile(d *caddyfile.Dispenser, _ interface{}) (interface{}, error) 
 				return nil, err
 			}
 		default:
-			return nil, d.ArgErr()
+			// Unknown tokens may be grouped headers containing credentials.
+			return nil, d.Errf("unsupported security directive")
 		}
 	}
 
+	if err := validateOIDCProviderMounts(app.Config); err != nil {
+		return nil, d.Errf("%v", err)
+	}
+	app.omitStoredOAuthRegistrationSnapshots()
 	return httpcaddyfile.App{
 		Name:  appName,
 		Value: caddyconfig.JSON(app, nil),

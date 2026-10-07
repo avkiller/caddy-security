@@ -1,6 +1,6 @@
 ---
 name: configuration-secrets
-description: "caddy-security secrets manager Caddyfile configuration. Use when creating, reviewing, or modifying security secrets blocks, external security.secrets modules, static secrets manager examples, AWS secrets manager examples, secret IDs, secret-backed user data, authdbctl-generated password or API key hashes, secret-backed crypto keys, and integration with runtime replacement."
+description: "Configure security.secrets plugins and secret lookup values for users, credentials, and crypto. Use for static/AWS manager wiring and lookup failures; runtime field support belongs to runtime resolution."
 ---
 
 # Configuration Secrets
@@ -25,13 +25,15 @@ client secret, SMTP password, or crypto shared secret.
 ## Shape
 
 ```caddyfile
-security {
-	secrets static_secrets_manager access_token {
-		shared_secret {env.JWT_SHARED_KEY}
-	}
+{
+	security {
+		secrets static_secrets_manager access_token {
+			shared_secret {env.JWT_SHARED_KEY}
+		}
 
-	authentication portal myportal {
-		crypto key sign-verify "secrets:access_token:shared_secret"
+		authentication portal myportal {
+			crypto key sign-verify "secrets:access_token:shared_secret"
+		}
 	}
 }
 ```
@@ -55,12 +57,14 @@ Use `static_secrets_manager` only when the Caddy binary is built with
 `github.com/greenpau/caddy-security-secrets-static-secrets-manager`.
 
 ```caddyfile
-security {
-	secrets static_secrets_manager users/jsmith {
-		name "John Smith"
-		email "jsmith@localhost.localdomain"
-		password "bcrypt:10:$2a$10$iqq53VjdCwknBSBrnyLd9OH1Mfh6kqPezMMy6h6F41iLdVDkj13I6"
-		api_key "bcrypt:10:$2a$10$TEQ7ZG9cAdWwhQK36orCGOlokqQA55ddE0WEsl00oLZh567okdcZ6"
+{
+	security {
+		secrets static_secrets_manager users/jsmith {
+			name "John Smith"
+			email "jsmith@localhost.localdomain"
+			password "bcrypt:10:$2a$10$iqq53VjdCwknBSBrnyLd9OH1Mfh6kqPezMMy6h6F41iLdVDkj13I6"
+			api_key "bcrypt:10:$2a$10$TEQ7ZG9cAdWwhQK36orCGOlokqQA55ddE0WEsl00oLZh567okdcZ6"
+		}
 	}
 }
 ```
@@ -79,10 +83,12 @@ Use `aws_secrets_manager` only when the Caddy binary is built with
 `github.com/greenpau/caddy-security-secrets-aws-secrets-manager`.
 
 ```caddyfile
-security {
-	secrets aws_secrets_manager access_token {
-		region us-east-1
-		path authcrunch/caddy/access_token
+{
+	security {
+		secrets aws_secrets_manager access_token {
+			region us-east-1
+			path authcrunch/caddy/access_token
+		}
 	}
 }
 ```
@@ -121,6 +127,12 @@ Resolution is strict:
 - The returned value must be a string. Non-string values cause provisioning to
   fail with `secret value is not a string`.
 
+Only a whole value matching that three-part form is recognized as a lookup.
+Malformed forms such as `secrets:smtp:password:extra` are ordinary strings to
+the current resolver; do not assume they are rejected as missing secrets.
+Check lookup spelling explicitly. A well-formed lookup with a missing manager
+or key fails provisioning rather than falling back to the literal reference.
+
 Use quotes around secret lookup strings when they contain characters that could
 be parsed unexpectedly.
 
@@ -148,7 +160,10 @@ secrets static_secrets_manager users/jsmith {
 }
 
 local identity store localdb {
+	realm local
+	path assets/config/users.json
 	user jsmith {
+		email jsmith@localhost.localdomain
 		password "secrets:users/jsmith:password" overwrite
 	}
 }
@@ -165,7 +180,8 @@ The output includes `secret: <full-secret>` for the API client and
 `api key <24-char-prefix> "<bcrypt-payload>"` for the Caddyfile. Do not store
 the plaintext `secret:` value in the server config. If the payload is
 secret-backed, keep the 24-character prefix in the Caddyfile and store only the
-bcrypt payload in the secrets manager:
+bcrypt payload in the secrets manager. This example adds a key to an existing
+local user; keep its username and email consistent with that record:
 
 ```caddyfile
 secrets static_secrets_manager users/jsmith {
@@ -173,7 +189,10 @@ secrets static_secrets_manager users/jsmith {
 }
 
 local identity store localdb {
+	realm local
+	path assets/config/users.json
 	user jsmith {
+		email jsmith@localhost.localdomain
 		api key XnxJ5W0AAcDb2FO1nefd35fT "secrets:users/jsmith:api_key"
 	}
 }
@@ -184,15 +203,29 @@ local identity store localdb {
 The fixture test binary may not register external secrets manager modules. The
 `testcase_security_with_secrets` fixture intentionally expects a
 `module not registered: security.secrets.static_secrets_manager` error even
-though the Caddyfile shape is intentional.
+though the Caddyfile shape is intentional. `TestIdentityStoreSecretsFixture`
+parses its local-user block separately so a missing plugin cannot hide obsolete
+user syntax. `api_key` is a key inside the external manager; the local user
+consumes it as `api key <24-character-prefix> secrets:<id>:api_key`, without
+an `overwrite` suffix. The challenge E2E verifies static API-key provisioning
+and login before checking explicit challenge-policy rejection.
 
 The AWS plugin validates by fetching and caching the configured AWS secret during
 plugin validation. The static plugin serves the configured inline map locally.
 In both cases, caddy-security only consumes the common `SecretsManager`
 interface after Caddy loads the module.
 
-Use `configuration-runtime-resolution` when explaining how `{env.*}` and
-`secrets:*:*` values are substituted after adaptation. Runtime replacement also
+External plugin behavior must be checked against the module included in the
+actual Caddy binary; these plugins are not selected by this repository's
+`go.mod`. In static manager v1.0.1, `{env.*}` expansion happens in
+the plugin's Caddyfile unmarshaler, so adapted JSON already contains the value.
+An unresolved placeholder becomes `CADDY_REPLACEMENT_FAILED` there. This differs
+from caddy-security's strict provisioning-time lookup. Do not use successful
+adaptation as proof that a plugin's environment reference resolved correctly,
+or publish adapted output containing real secrets.
+
+The [runtime resolution contract](../configuration-runtime-resolution/SKILL.md)
+identifies which fields substitute `{env.*}` and `secrets:*:*` after adaptation. Runtime replacement also
 revalidates affected authcrunch config sections after substitution, so examples
 must resolve to values acceptable to go-authcrunch parsers.
 
@@ -203,3 +236,10 @@ Use these references:
 - `testdata/caddyfile_adapt/testcase_security_with_secrets.Caddyfile` for
   static manager block and lookup shape.
 - `caddyfile_resolve_test.go`.
+
+`TestResolveRuntimeAppConfigEncodedInstructions` uses an in-process synthetic
+manager to verify exact string replacement and missing-key failure; the Caddy
+lifecycle E2E checks rejected reload recovery. Neither loads the static/AWS
+plugins or contacts AWS. Qualifying an external manager requires the intended
+module version and isolated synthetic values, including an unavailable key and
+non-string result; AWS service behavior remains outside the normal test gate.

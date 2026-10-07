@@ -15,6 +15,7 @@
 package security
 
 import (
+	"net/http"
 	"strconv"
 	"strings"
 
@@ -23,6 +24,40 @@ import (
 	cfgutil "github.com/greenpau/go-authcrunch/pkg/util/cfg"
 )
 
+// parseCaddyfileAuthorizationMisc parses policy options. Raw auth proxy lines
+// are validated by go-authcrunch/pkg/authproxy during policy validation.
+// Caddy does not resolve runtime placeholders in raw auth proxy statements.
+//
+// Syntax:
+//
+//	enable <js redirect|strip token|additional scopes>
+//	enable login hint [with <validator> [<validator>...]]
+//	disable <auth redirect query|auth redirect>
+//	validate <method path|path acl|source address|bearer header>
+//	set session_id cookie name <name>
+//	set access_token cookie name <name> [<name>...]
+//	set token sources <cookie|header|query> [<cookie|header|query>...]
+//	set auth url <url>
+//	set forbidden url <url>
+//	set redirect query parameter <name>
+//	set redirect status <300-308>
+//	set user identity <field>
+//	with basic auth portal <name_or_url> realm <realm>
+//	with api key auth portal <name_or_url> realm <realm>
+//	with api key header name <header>
+//	with auth realm header name <header>
+//
+// A session cookie name setting takes one value; multiple access cookie names
+// belong on a single line. Cookie names and repeated settings must be unique.
+// Coordinate explicit names with portals using a custom cookie prefix.
+// enable strip token removes the accepted credential from its actual cookie,
+// bearer/named header, Basic/API-key header or query source; unrelated values
+// remain. Direct Basic/API-key authentication observes portal challenge policy.
+// validate path acl checks both policy rules and token path claims at every
+// decoded/cleaned path interpretation. Claims use literal paths with * and **
+// wildcards, not regular expressions; * stays in one segment, ** spans slashes,
+// and both require at least one allowed character. The library rejects ambiguous
+// encodings instead of rewriting the downstream request to grant access.
 func parseCaddyfileAuthorizationMisc(h *caddyfile.Dispenser, p *authz.PolicyConfig, rootDirective, k string, args []string) error {
 	v := strings.Join(args, " ")
 	v = strings.TrimSpace(v)
@@ -52,6 +87,8 @@ func parseCaddyfileAuthorizationMisc(h *caddyfile.Dispenser, p *authz.PolicyConf
 		}
 	case "validate":
 		switch {
+		case v == "method path":
+			p.ValidateMethodPath = true
 		case v == "path acl":
 			p.ValidateAccessListPathClaim = true
 			p.ValidateMethodPath = true
@@ -77,17 +114,30 @@ func parseCaddyfileAuthorizationMisc(h *caddyfile.Dispenser, p *authz.PolicyConf
 		}
 	case "set":
 		switch {
-		case strings.Contains(v, "cookie name") && len(args) >= 4:
-			if args[3] == "" {
-				return h.Errf("%s directive %s has empty name", rootDirective, v)
+		case len(args) >= 3 && args[1] == "cookie" && args[2] == "name":
+			if len(args) < 4 {
+				return h.Errf("%s cookie name requires a value", rootDirective)
+			}
+			seen := make(map[string]bool)
+			for _, name := range args[3:] {
+				if (&http.Cookie{Name: name}).Valid() != nil || seen[name] {
+					return h.Errf("%s has an invalid or duplicate cookie name", rootDirective)
+				}
+				seen[name] = true
 			}
 			switch args[0] {
 			case "session_id":
+				if len(args) != 4 || p.SessionIDCookieName != "" {
+					return h.Errf("%s requires one session cookie name setting", rootDirective)
+				}
 				p.SessionIDCookieName = args[3]
 			case "access_token":
+				if len(p.AccessTokenCookieNames) != 0 {
+					return h.Errf("%s has duplicate access cookie name settings", rootDirective)
+				}
 				p.AccessTokenCookieNames = args[3:]
 			default:
-				return h.Errf("%s directive %s has unsupported %s name", rootDirective, v, args[0])
+				return h.Errf("%s has unsupported cookie role", rootDirective)
 			}
 		case strings.HasPrefix(v, "token sources "):
 			p.AllowedTokenSources = strings.Split(strings.TrimPrefix(v, "token sources "), " ")

@@ -40,6 +40,7 @@ type AuthnMiddleware struct {
 	RouteMatcher string `json:"route_matcher,omitempty" xml:"route_matcher,omitempty" yaml:"route_matcher,omitempty"`
 	PortalName   string `json:"portal_name,omitempty" xml:"portal_name,omitempty" yaml:"portal_name,omitempty"`
 	portal       *authn.Portal
+	app          *App
 }
 
 // CaddyModule returns the Caddy module information.
@@ -77,6 +78,7 @@ func (m *AuthnMiddleware) Provision(ctx caddy.Context) error {
 		return fmt.Errorf("security app erred with %q authentication portal: %v", m.PortalName, err)
 	}
 	m.portal = portal
+	m.app = app
 
 	return nil
 }
@@ -111,7 +113,7 @@ func (m *AuthnMiddleware) Validate() error {
 	if m.PortalName == "" {
 		return fmt.Errorf("empty portal name")
 	}
-	if m.portal == nil {
+	if m.portal == nil && m.app == nil {
 		return fmt.Errorf("portal is nil")
 	}
 
@@ -120,11 +122,43 @@ func (m *AuthnMiddleware) Validate() error {
 
 // ServeHTTP serves authentication portal.
 func (m *AuthnMiddleware) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.Handler) error {
+	release, ok := m.app.acquireRequest()
+	if !ok {
+		w.Header().Set("Cache-Control", "no-store")
+		return caddyhttp.Error(http.StatusServiceUnavailable, fmt.Errorf("security app is shutting down"))
+	}
+	defer release()
+	portal := m.portal
+	if portal == nil {
+		// Admission pins the root; cleanup cannot close it before this call ends.
+		var err error
+		portal, err = m.app.server.GetPortalByName(m.PortalName)
+		if err != nil {
+			return caddyhttp.Error(http.StatusServiceUnavailable, err)
+		}
+	}
+
+	normalizeSecurityMetadata(r)
 	rr := requests.NewRequest()
 	rr.ID = util.GetRequestID(r)
-	return m.portal.ServeHTTP(r.Context(), w, r, rr)
+	// Preserve the complete mount, body, cookies and protocol headers. ServeHTTP owns
+	// OIDC dispatch and refresh/session/logout authentication before ordinary
+	// access-token gates, so expired access can renew or log out. It also serves
+	// the matching browser coordinator and continuation UI. Do not preauthorize,
+	// rewrite, retry or broaden CORS for these requests in Caddy middleware.
+	// JSON/native login uses this same dispatch: never synthesize Cookie, Origin
+	// or Fetch Metadata headers, or turn its credentials into OIDC login evidence.
+	return portal.ServeHTTP(r.Context(), w, r, rr)
 }
 
+// parseAuthnCaddyfile attaches a named portal to a Caddy HTTP route.
+//
+// Syntax:
+//
+//	authenticate [<matcher>] with <portal>
+//
+// The portal is defined in security. This directive takes arguments only;
+// configure its internals in the corresponding security block.
 func parseAuthnCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error) {
 	m := &AuthnMiddleware{}
 	if err := m.UnmarshalCaddyfile(h.Dispenser); err != nil {

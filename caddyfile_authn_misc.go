@@ -15,15 +15,26 @@
 package security
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/greenpau/go-authcrunch/pkg/authn"
-	"github.com/greenpau/go-authcrunch/pkg/authn/cookie"
 	"github.com/greenpau/go-authcrunch/pkg/redirects"
 )
 
+// parseCaddyfileAuthPortalMisc parses portal enablement and redirect trust.
+//
+// Syntax:
+//
+//	enable source ip tracking
+//	enable identity <store|provider> <name> [<name>...]
+//	enable sso provider <name> [<name>...]
+//	validate source address
+//	trust <login|logout> redirect uri domain [exact|partial|prefix|suffix|regex] <domain> path [exact|partial|prefix|suffix|regex] <path>
+//
+// Omitted redirect match types default to exact. Both domain and path are required.
+// Match keywords as separate tokens; quoted domain/path values do not select
+// login versus logout trust. Missing selector values return a parse error.
 func parseCaddyfileAuthPortalMisc(h *caddyfile.Dispenser, portal *authn.PortalConfig, rootDirective, k string, args []string) error {
 	v := strings.Join(args, " ")
 	v = strings.TrimSpace(v)
@@ -32,8 +43,6 @@ func parseCaddyfileAuthPortalMisc(h *caddyfile.Dispenser, portal *authn.PortalCo
 		switch {
 		case v == "source ip tracking":
 			portal.TokenGrantorOptions.EnableSourceAddress = true
-		case v == "admin api":
-			portal.API.AdminEnabled = true
 		case strings.HasPrefix(v, "identity provider"):
 			if len(args) < 3 {
 				return h.Errf("malformed directive for %s: %s", rootDirective, v)
@@ -58,48 +67,9 @@ func parseCaddyfileAuthPortalMisc(h *caddyfile.Dispenser, portal *authn.PortalCo
 				portal.SingleSignOnProviders = append(portal.SingleSignOnProviders, providerName)
 			}
 		default:
-			return h.Errf("unsupported directive for %s: %s", rootDirective, v)
-		}
-	case "set":
-		switch {
-		case strings.Contains(v, "cookie name prefix") && len(args) == 4:
-			if args[3] == "" {
-				return h.Errf("%s directive %s has empty name", rootDirective, v)
-			}
-			portal.CookieConfig.CookieNamePrefix = strings.ToUpper(args[3])
-			portal.CookieConfig.SessionIDCookieName = fmt.Sprintf("%s_%s", strings.ToUpper(args[3]), cookie.DefaultSessionIDCookieName)
-			portal.CookieConfig.SandboxIDCookieName = fmt.Sprintf("%s_%s", strings.ToUpper(args[3]), cookie.DefaultSandboxIDCookieName)
-			portal.CookieConfig.RefererCookieName = fmt.Sprintf("%s_%s", strings.ToUpper(args[3]), cookie.DefaultRefererCookieName)
-			portal.CookieConfig.IdentityTokenCookieName = fmt.Sprintf("%s_%s", strings.ToUpper(args[3]), cookie.DefaultIdentityTokenCookieName)
-			portal.CookieConfig.AccessTokenCookieName = fmt.Sprintf("%s_%s", strings.ToUpper(args[3]), cookie.DefaultAccessTokenCookieName)
-			portal.TokenValidatorOptions.AuthorizationCookieNames = []string{fmt.Sprintf("%s_%s", strings.ToUpper(args[3]), cookie.DefaultAccessTokenCookieName)}
-			portal.TokenGrantorOptions.AccessTokenCookieName = fmt.Sprintf("%s_%s", strings.ToUpper(args[3]), cookie.DefaultAccessTokenCookieName)
-			portal.CookieConfig.RefreshTokenCookieName = fmt.Sprintf("%s_%s", strings.ToUpper(args[3]), cookie.DefaultRefreshTokenCookieName)
-
-		case strings.Contains(v, "cookie name") && len(args) == 4:
-			if args[3] == "" {
-				return h.Errf("%s directive %s has empty name", rootDirective, v)
-			}
-			switch args[0] {
-			case "session_id":
-				portal.CookieConfig.SessionIDCookieName = args[3]
-			case "sandbox_id":
-				portal.CookieConfig.SandboxIDCookieName = args[3]
-			case "redirect_url":
-				portal.CookieConfig.RefererCookieName = args[3]
-			case "id_token":
-				portal.CookieConfig.IdentityTokenCookieName = args[3]
-			case "access_token":
-				portal.CookieConfig.AccessTokenCookieName = args[3]
-				portal.TokenValidatorOptions.AuthorizationCookieNames = []string{args[3]}
-				portal.TokenGrantorOptions.AccessTokenCookieName = args[3]
-			case "refresh_token":
-				portal.CookieConfig.RefreshTokenCookieName = args[3]
-			default:
-				return h.Errf("%s directive %s has unsupported %s name", rootDirective, v, args[0])
-			}
-		default:
-			return h.Errf("%s directive %q is unsupported", rootDirective, v)
+			// Misspelled admin keywords can reach this fallback. Do not echo
+			// argument values that the shared admin parser would redact.
+			return h.Errf("unsupported directive for %s", rootDirective)
 		}
 	case "validate":
 		switch v {
@@ -112,12 +82,15 @@ func parseCaddyfileAuthPortalMisc(h *caddyfile.Dispenser, portal *authn.PortalCo
 		}
 	case "trust":
 		switch {
-		case strings.Contains(v, "logout redirect uri"), strings.Contains(v, "login redirect uri"):
+		case len(args) >= 3 && (args[0] == "login" || args[0] == "logout") && args[1] == "redirect" && args[2] == "uri":
 			var domainMatchType, domain, pathMatchType, path string
 			argp := 3
 			for argp < len(args) {
 				switch args[argp] {
 				case "domain", "path":
+					if !arrayElementExists(args, argp+1) {
+						return h.Errf("%s directive %q is malformed", rootDirective, v)
+					}
 					if hasMatchTypeKeywords(args[argp+1]) {
 						if !arrayElementExists(args, argp+2) {
 							return h.Errf("%s directive %q is malformed", rootDirective, v)
@@ -149,7 +122,7 @@ func parseCaddyfileAuthPortalMisc(h *caddyfile.Dispenser, portal *authn.PortalCo
 			if err != nil {
 				return h.Errf("%s directive %q erred: %v", rootDirective, v, err)
 			}
-			if strings.Contains(v, "logout redirect uri") {
+			if args[0] == "logout" {
 				portal.TrustedLogoutRedirectURIConfigs = append(portal.TrustedLogoutRedirectURIConfigs, redirectURIConfig)
 			} else {
 				portal.TrustedLoginRedirectURIConfigs = append(portal.TrustedLoginRedirectURIConfigs, redirectURIConfig)

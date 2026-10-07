@@ -1,9 +1,18 @@
 ---
 name: scripts-and-automation
-description: caddy-security repository automation, Makefile target selection, local build/test/report/coverage commands, local go-authcrunch go.mod replacement shim workflow, asset and documentation update scripts, release/version workflows, generated artifact handling, and guardrails for dependency, devbuild, cleanup, and release actions. Use when choosing, running, documenting, or updating repository scripts and Make targets; troubleshooting CI/build/test automation; coordinating caddy-security development with local go-authcrunch changes; refreshing Caddyfile/config fixtures; deciding whether generated outputs belong in a change; or preparing releases for this Go/Caddy module.
+description: "Choose or maintain repository Make/script workflows, builds, dependency selection, generated artifacts, and security CLI tools. Routes release work and documents local administration and standalone login commands."
 ---
 
 # Scripts and Automation
+
+## Browser automation default
+
+Use headless Chrome for browser automation and screenshot/network evidence.
+Avoid Firefox unless explicitly requested for a browser-specific task. Follow
+[the testing browser guidance](../testing-and-ci/SKILL.md#browser-choice) for
+private profiles, reproducible tool pins and strict TLS trust. Keep all downloaded
+browser tools and generated data in this repository's `tmp/`; do not install
+browser packages or trust roots system-wide for a test run.
 
 ## Overview
 
@@ -13,31 +22,89 @@ repository builds a Caddy command binary at `bin/authcrunch` from
 `authenticate` and `authorize` integrations, Caddy standard modules, and
 `caddy-trace`.
 
+For the independently installable `cmd/caddy-authenticator`, use the
+[standalone authenticator reference](references/caddy-authenticator.md). It owns
+profile-based portal login, private credentials/token/log storage, and the
+command's user guide. Its implementation reuses `go-authcrunch/pkg/authclient`;
+it does not load Caddy server modules or require the portal admin API.
+
+Use [release-and-versioning](../release-and-versioning/SKILL.md) to maintain
+version authority, release targets, release CI, packaging, and publication.
+After changing commands, scripts, CI, build behavior, or selected dependencies,
+review and update the affected repo-local skills and references in the same
+change. Follow [keeping skills current](../skill-authoring/SKILL.md#keep-skills-current-after-code-changes)
+so documented commands, side effects, prerequisites, and validation match the
+resulting workflow.
+
 Prefer narrow `go test` commands for quick validation while editing. Use the
 Makefile targets when the user asks for the repository workflow, reports,
 release preparation, fixture formatting, or CI-like behavior.
 
 ## Command Selection
 
+Follow the [repository scope](../coding-directives/SKILL.md#repository-scope),
+including its sole exception for `../xcaddy-caddy-security`. Inspect working
+directories, script side effects, cleanup paths, and output overrides before
+execution. Run this module's automation; sibling source-module build, test,
+formatting, license, dependency, and cleanup workflows remain out of scope.
+
 - Use `go test ./...` for a fast all-package check without coverage reports.
 - Use `go test -run <TestName> ./...` for focused validation.
-- Use `make build` to compile `cmd/authcrunch/main.go` into `bin/authcrunch`,
-  print the binary version, and format `assets/**/Caddyfile` files.
+- Use `make build` to validate `VERSION` and the authenticator fallback, compile
+  `cmd/authcrunch` and `cmd/caddy-authenticator` into their corresponding `bin/`
+  executables with `-mod=readonly -trimpath`, and print both versions. It injects
+  `VERSION` into the authenticator's `main.appVersion` linker variable.
 - Use `make` when the user asks for the default build; it runs `info` and
   `build`.
-- Use `make test` for the full local workflow: create `.coverage`, install test
-  report tools if missing, run `go test -json -v ./...`, write
-  `.coverage/test_output.jsonl`, generate coverage and test-output reports, and
-  fail if any JSON test action failed. Review the resulting
-  `.coverage/coverage.html` and `.coverage/test_output.html` files in a browser
-  for easy coverage and test-output inspection.
-- Use `make qtest` only when the Makefile's current `QUICK_TEST_PATTERN` is the
-  desired scope. Prefer direct `go test -run ... ./...` instead of editing the
-  Makefile just to run a different quick test.
-- Use `make run-reports` only after `.coverage/test_output.jsonl` and
-  `.coverage/coverage.out` exist.
-- Use `make coverage` after a previous coverage run or `make test`; the target
-  reads `.coverage/coverage.out` before it refreshes coverage.
+- Use `make test` for uncached, race-enabled Go tests and complete reports
+  through pinned `go tool tested` and the resource guard. `TEST` is a regex,
+  `TEST_DIR` accepts package patterns, and `TEST_TIMEOUT` is a quoted per-package duration (default `60m`).
+  `MINIMUM_COVERAGE=1` checks for nonzero coverage; it is not a coverage goal.
+  Read [test resource controls](references/test-resources.md) for concurrency,
+  memory, wall-time limits, cancellation, live output and resource evidence.
+- Use `make qtest` for the root package (`.`) by default, or set
+  `QUICK_TEST_DIR` and `TEST` for another scope. Reports go to `.coverage/quick`.
+- Use `make run-reports` to rebuild presentations from recorded tested evidence.
+  It preserves failure status. `make coverage` is an alias for this operation;
+  it does not rerun tests.
+- Use `make test-automation` for verbose Python fixture tests of artifact
+  identity, build metadata, and the real Make/tested lifecycle.
+- Use `make scan-codeql` for a local Go scan, or set `CODEQL_LANGUAGE` to
+  `javascript-typescript`, `python` or `actions` for the other CI languages.
+  Use `make test-codeql` for real CLI regression fixtures in the selected
+  language. Read the
+  [CodeQL workflow](references/codeql.md) for CLI prerequisites, evidence,
+  approved suppression policy, and findings review.
+- Use `make oidc-conformance-prepare` and `make oidc-conformance-test` for the opt-in
+  official Foundation plans against a fresh Caddy binary. Follow the
+  [conformance workflow](../configuration-oauth-applications/references/oidc-conformance.md)
+  for pinned local prerequisites, private evidence, strict TLS trust and
+  preserved nonzero results. Conformance units/E2E and their artifacts are
+  separate from regular testing; existing local OIDC regressions remain default.
+  Set `CONFORMANCE_RESULTS` to a new directory below this checkout's `tmp/`;
+  open its private `index.html` for explanations and links to all run evidence.
+  Missing downloaded prerequisites require `make oidc-conformance-prepare`.
+  Use `make oidc-conformance-help` for local tool locations and removal commands
+  that preserve result bundles; it does not install or remove anything.
+- Use the manual-only `OIDC conformance` Actions workflow for a downloadable
+  report from a hosted runner. Its [setup and artifact reference](../configuration-oauth-applications/references/oidc-conformance-actions.md)
+  explains the readable summary, complete report after one ZIP extraction,
+  original runner status and failed-run uploads. This never joins regular CI.
+- Use `make oidc-conformance-cleanup` to remove all identified OIDC result
+  bundles under `tmp/`, including custom destinations and top-level supplemental
+  `oidc-*` logs, audits and browser reports, plus `audit_oidc_*.py`/`check_oidc_*.py`
+  helpers. Reserve these temporary names for generated OIDC output; prefer
+  keeping new diagnostics inside their run bundle. Cleanup retains the prepared
+  workspace, dependencies and caches, records custom dependency locations for
+  repeated cleanup, and refuses active runs/preparation. It does not clean
+  ordinary `.coverage/` or unrelated temporary files. See the
+  [cleanup scope](../configuration-oauth-applications/references/oidc-conformance.md#remove-test-output-keep-prerequisites).
+- Use `make ci-check` for sequential version, automation, full Go test/report,
+  and build gates, including under `make -j`.
+- Use `make version-check` for read-only version validation and
+  `make artifact-id` for version/timestamp/commit identity and CI outputs.
+  After an explicit VERSION edit, `make version-sync` updates the authenticator's
+  Go install fallback without bumping or staging a release.
 - Use `make fmtcfg` to format Caddyfile fixtures under
   `testdata/caddyfile_adapt` and `assets/config`; it requires an existing
   `bin/authcrunch`.
@@ -49,34 +116,64 @@ choose `make test`, `make qtest`, or direct `go test` instead.
 
 ## Tooling and Dependencies
 
-The module declares Go `1.25.0` and Caddy `v2.11.2`.
+Read the module's Go minimum and Caddy dependency from `go.mod`; inspect
+`Makefile` separately for the Caddy version used by `devbuild`. CI explicitly
+selects Go `1.26.8` with `GOTOOLCHAIN=local` and Node 24; Python 3.9+ runs
+automation. The default Go suite requires Chrome/Chromium for Caddy browser
+refresh E2E. Set `AUTHCRUNCH_TEST_BROWSER` when autodetection cannot find the
+executable. Missing browser/Node prerequisites fail the test; no sibling UI
+build or npm dependency installation is needed. See
+[browser validation](../authentication-portal-api/references/browser-refresh.md#validation-in-this-repository).
 
-- `make dep` installs developer tools with `go install`, including `golint`,
-  `xcaddy`, `versioned`, and `richgo`.
-- `make install-test-tools` installs `richgo`, `tparse`, and
-  `go-test-report` if they are missing.
-- `go mod tidy`, `go mod verify`, `go mod download`, `go install`, and `xcaddy`
-  may require network access.
+`go.mod` and `go.sum` pin `github.com/greenpau/tested` v1.1.0 and the release tool
+`github.com/greenpau/versioned/cmd/versioned`; use `go tool tested` and
+`go tool versioned`. `make dep` downloads/verifies module
+dependencies and resolves tested. `make install-test-tools` runs its version
+command without global installs or module edits. The other maintenance tools,
+such as `xcaddy` for `devbuild` and `versioned` for the license
+recipes, must already be on `PATH`; `make dep` does not install them.
+`make license` selects tracked and nonignored new Go files through Git. It must
+not traverse ignored `tmp/`, suite checkouts, tool caches or vendored modules;
+rewriting those files would invalidate the unmodified dependency evidence.
 
-When a dependency or module command fails because of sandboxed network access,
-rerun it with the normal escalation flow instead of replacing the repository
-workflow with an ad hoc workaround.
+Module/tool downloads and `xcaddy` can need network access. Tests and builds
+do not run module tidy, license rewrites, download-link regeneration, or
+Caddyfile formatting. Use explicit maintenance targets when those changes are
+intended.
 
 ## Development Builds
 
-`make devbuild` uses `xcaddy` to build Caddy into `bin/authcrunch` with this
-module, `caddy-security-secrets-static-secrets-manager`, `caddy-trace`, and a
-local `go-authcrunch` replacement. It writes to the sibling directory
-`../xcaddy-caddy-security`, but the current Makefile hard-codes the
-go-authcrunch replacement path in its `--replace` argument instead of using the
-generic `../go-authcrunch` path.
+`make devbuild` uses the explicitly permitted `../xcaddy-caddy-security`
+workspace. It removes files there, changes into that directory, and runs
+`xcaddy` to build Caddy with this module, the static secrets manager,
+`caddy-trace`, and a local go-authcrunch replacement. The final binary is
+`bin/authcrunch` in this repository.
 
-Run `make devbuild` only when the user explicitly wants that integrated local
-Caddy build and the sibling output plus hard-coded go-authcrunch path are
-acceptable for the current machine, or after updating the Makefile path
-deliberately.
+Use this target when an integrated xcaddy build is needed. Check the actual
+workspace and cleanup paths before running it, including whether a symlink
+redirects them. The exception is limited to `../xcaddy-caddy-security`;
+overriding `PLUGIN_NAME` must not redirect writes to another sibling. The
+Makefile hard-codes the go-authcrunch replacement path in a `--with ...=...`
+argument; verify it selects the intended existing checkout, and keep that
+checkout read-only. Use `make build` when the normal Caddy wrapper meets the
+task.
 
 ## Local go-authcrunch Development
+
+For an explicitly requested published version, use a targeted upgrade from this
+repository: `go get github.com/greenpau/go-authcrunch@<requested-version>`, then
+`go mod tidy` and `go mod verify`. Inspect the dependency diff and keep the
+versioned replacement examples in `CONTRIBUTING.md` and the xcaddy argument in
+`Makefile` aligned. Do not use `make upgrade` for a single-module request: it
+updates all dependencies. `make sync` takes its version from the sibling's
+`VERSION`, which may differ from the requested release. Confirm the selected
+module's `Dir` and absence of an unintended `Replace` before validation.
+
+For official OIDC qualification of newer committed work, select its exact
+published commit with `go get github.com/greenpau/go-authcrunch@<commit>`.
+The resulting immutable pseudo-version must match the intended sibling revision;
+the conformance harness rejects local replacements. Record the selected module
+checksum and origin, and keep sibling source and Git state read-only.
 
 Development in `caddy-security` often connects this module to a local
 `github.com/greenpau/go-authcrunch` checkout that sits next to the
@@ -85,9 +182,10 @@ Development in `caddy-security` often connects this module to a local
 `<parent>/go-authcrunch`; from this repository, that path is
 `../go-authcrunch`.
 
-Use a Go module replacement when the user is aligning `caddy-security` changes
-with parallel local `go-authcrunch` work. Read the currently required
-`go-authcrunch` version from this repository's `go.mod`:
+Use a Go module replacement when the task requires consuming existing local
+`go-authcrunch` changes. Edit only this repository's `go.mod` and validate this
+module; do not develop, format, tidy, or test the sibling checkout. Read the
+currently required `go-authcrunch` version from this repository's `go.mod`:
 
 ```bash
 go list -m -f '{{.Version}}' github.com/greenpau/go-authcrunch
@@ -99,22 +197,25 @@ Then use that required version in the replacement command:
 go mod edit -replace github.com/greenpau/go-authcrunch@<go-authcrunch-version-from-go.mod>=../go-authcrunch
 ```
 
-The replacement shim in `go.mod` should generally stay while `caddy-security`
-depends on local `go-authcrunch` changes that are still in progress.
+Keep the replacement while this module intentionally depends on existing
+unreleased upstream changes. Upstream implementation and publication happen
+as separate work. Once the required version is available, update this
+repository's dependency, remove its local replacement, and test here.
+`make sync` removes local go-authcrunch replacements after updating references;
+it must not be used as a reason to edit or release the sibling first.
 
-In the normal sequence, `go-authcrunch` changes first, such as implementing a
-new feature, and then `caddy-security` changes to use that feature through the
-local replacement. After there are no more `go-authcrunch` changes, and the
-target `go-authcrunch` version has been updated, remove the local `replace`
-directive, sync `caddy-security` to the new `go-authcrunch` version, and test.
-`make sync` removes local go-authcrunch replacements after updating references.
+After changing the selected Caddy or go-authcrunch version, audit delegated
+Caddyfile grammar and examples using
+[Syntax maintenance](../configuration/references/syntax-maintenance.md).
+A dependency update can change accepted directives even when no local parser
+switch changes. Refresh the owning configuration skills and syntax comments.
 
 ## Asset and Documentation Scripts
 
 `assets/scripts/generate_downloads.sh` rewrites Caddy download links in
-`README.md` using `VERSION`, `github.com/greenpau/caddy-security`, and the
-hard-coded `github.com/greenpau/caddy-trace` version. It is called by
-`make release-update-version` and `make license`.
+`README.md`. See [release-and-versioning](../release-and-versioning/SKILL.md)
+for version inputs and regeneration requirements. It is called by
+`make release`, `make minor-release`, their `fast-` variants, and `make license`.
 
 `assets/scripts/update_doc_refs.sh` reads `../go-authcrunch/VERSION`, updates
 go-authcrunch references in `CONTRIBUTING.md`, `Makefile`, and `go.mod`, removes
@@ -123,28 +224,8 @@ local go-authcrunch replace directives from `go.mod`, then runs `go mod tidy`,
 
 Use `make sync` only for an explicit go-authcrunch reference refresh. The script
 assumes a sibling `../go-authcrunch` checkout and uses BSD/macOS `sed -i ''`
-syntax.
-
-## Release and Version Targets
-
-Treat release targets as human-operator actions unless the user explicitly asks
-for a release workflow.
-
-- `make release-git-check` runs `go mod tidy`, `go mod verify`, requires the
-  current branch to be `main`, and requires a clean git worktree.
-- `make release-update-version` runs `versioned -patch`, refreshes README
-  download links, and stages `VERSION`, `README.md`, `CONTRIBUTING.md`, and
-  `Makefile`.
-- `make release-git-commit` creates a release commit, creates an annotated tag,
-  pushes commits, and pushes tags.
-- `make release` chains `release-git-check`, `build`, `release-update-version`,
-  and `release-git-commit`.
-- `.github/workflows/release.yml` runs GoReleaser on `v*` tags or manual
-  dispatch. `.goreleaser.yaml` builds `cmd/authcrunch` for Linux, Windows, and
-  Darwin on `amd64` and `arm64`.
-
-Never push commits or tags, create release tags, or run the chained release
-target unless the user has explicitly requested that action.
+syntax. The sibling `VERSION` is an input only; all reference updates, module
+commands, builds, and tests run in `caddy-security`.
 
 ## Other Targets
 
@@ -161,23 +242,95 @@ target unless the user has explicitly requested that action.
 Do not treat generated outputs as source changes unless the user explicitly asks
 to update or commit them.
 
-- `bin/authcrunch` is produced by build/devbuild targets.
-- `.coverage/coverage.html`, `.coverage/coverage.out`,
-  `.coverage/test_output.jsonl`, and `.coverage/test_output.html` are produced
-  by `make test` and report targets. They contain coverage stats and test output
-  reports; the HTML files are browser-friendly review artifacts.
-- `../xcaddy-caddy-security` is produced by `make devbuild` outside the repo.
+- `bin/authcrunch` is produced by build/devbuild targets; `make build` also
+  produces `bin/caddy-authenticator`.
+- `.coverage/` contains the tested HTML/JSON/JUnit reports, raw test output,
+  coverage profile, stderr, run metadata, and generation manifest. Start at
+  `.coverage/index.html`; see `testing-and-ci` for the complete evidence layout.
+- `.coverage/codeql/` holds local scan databases, raw and reviewed SARIF/CSV,
+  suppression audits, logs, and retained regression fixtures.
+  Its evidence is separate from tested's report bundle;
+  `make clean` removes both. Local CodeQL does not upload or dismiss alerts.
+- `../xcaddy-caddy-security` is the permitted devbuild workspace. Only that
+  sibling workspace may be created, refreshed, or cleaned for xcaddy builds.
 
 Formatted Caddyfiles, README download links, `VERSION`, `go.mod`, and
 `go.sum` can be intentional source changes depending on the target. Review the
 diff before deciding whether to keep them.
 
+`COVERAGE_DIR` selects the report directory. Keep overrides inside this checkout;
+guarded runs in one checkout are serialized by `.coverage/test-resource.lock`,
+even when output directories differ. Keep this lock in place during validation.
+Let tested refresh only its managed artifacts: do not recursively delete report
+directories in test targets. Full, quick, and custom bundles and unrelated investigation files must
+survive one another's runs.
+Whole-directory cleanup belongs to the explicitly requested `make clean`.
+
+Normal coverage reports include the root test executable's E2E subprocesses
+through Go's native coverage merge. See
+[subprocess coverage](../testing-and-ci/SKILL.md#subprocess-coverage) for the
+bootstrap, regression tests and limits. Keep merging before tested evaluates
+coverage and writes reports; never patch a finished bundle's coverage percentage.
+
 ## CI Notes
 
-The build workflow runs on Ubuntu with Go `1.25.x`. It installs `make` and
-`libnss3-tools`, runs `make dep`, `go mod tidy`, `go mod verify`,
-`go mod download`, `make test || true`, `make test`, then `make coverage`, and
-uploads `.coverage/coverage.html`.
+The reusable `.github/workflows/build.yml` runs `make dep` and `make ci-check`,
+checks source remains unchanged, and uploads the complete `.coverage/` bundle
+after an attempted gate, including failure evidence. Release CI requires this
+same gate. The [testing contract](../testing-and-ci/SKILL.md) owns local
+reproduction; [release ownership](../release-and-versioning/SKILL.md) covers
+artifact identities and tag requirements.
 
 The CLA workflow may update `assets/cla/signatures.json` through GitHub
 automation. Do not edit CLA signatures or consent files unless the user asks.
+
+## Security Dependency Version
+
+Run `bin/authcrunch security version` to print the go-authcrunch module linked
+into the executable, for example `go-authcrunch v1.2.6`. This uses
+`runtime/debug.ReadBuildInfo` and works without a config, server, credentials,
+Go installation or source checkout. Do not substitute the caddy-security
+`VERSION`, a working-directory go.mod, or the authdb package's version banner.
+`bin/authcrunch version` continues to report Caddy's version.
+
+Preserve pseudo-versions and module replacements in diagnostics. A replacement
+prints `go-authcrunch <required-version> => <replacement-path> <replacement-version>`;
+an unversioned local replacement uses `(devel)`, so the required release is not
+mistaken for the actual checkout. Missing build metadata prints
+`go-authcrunch unknown`. `command_security.go` owns registration and formatting;
+its unit tests and `TestCaddySecurityVersionE2E` cover the command contract.
+
+## Local OAuth Provisioning
+
+The built binary registers the `security` command group through Caddy's command
+extension API. It is separate from adapt, validate, run, reload, and Make maintenance.
+Use nested command words for the domain, action, and resource, such as
+`bin/authcrunch security oauth create application`. Follow this pattern for future
+security commands.
+Use `oauth init provisioning store` for storage of OAuth application credentials and
+OIDC provider signing keys; reserve user-registration terminology for user sign-up.
+Use [Private provisioning and activation](../configuration-oauth-applications/references/private-provisioning.md)
+for the private input grammar and `oauth init provisioning store`,
+`oauth create application`, `oauth rotate secret`, and `oidc create signing key`
+subcommands, explicit revision activation, and interrupted-writer recovery.
+Each provisioning command prints only the resulting path; it never prints client
+secrets or private keys.
+
+## Local User Administration
+
+Use [Local user commands](references/local-user-commands.md) for
+`security local` client configuration, login, local realm/user inspection,
+account creation/deletion, password resets, roles/challenges, realm reload,
+and offline password/API-key generation. Remote operations use the portal's
+admin API; generators work offline and never modify database files.
+
+## Acceptance criteria
+
+- A normal build creates both commands with their correct version identities
+  and leaves source unchanged; explicit maintenance is chosen for source rewrites.
+- A requested dependency change selects only the requested version/module and
+  records any replacement. A sibling VERSION does not override user intent.
+- Test/report failures retain their status and original evidence. Cleanup does
+  not happen as an incidental validation step or erase another run's bundle.
+- Local administration, OAuth provisioning, standalone login, and release tasks
+  reach their distinct owners and respect their different input/side-effect scopes.
