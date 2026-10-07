@@ -6,8 +6,11 @@ bin/**
 tmp/**
 .coverage/**
 .doc/**
+__pycache__/
+*.py[cod]
 *TODO*
 123*
+*.json.lock
 
 # Binaries for programs and plugins
 *.exe

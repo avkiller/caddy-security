@@ -68,6 +68,10 @@ func TestParseCaddyfileIdentityProvider(t *testing.T) {
 						"identity_token_cookie_name": "AUTHP_ID_TOKEN",
 						"access_token_cookie_name": "AUTHP_ACCESS_TOKEN",
 						"refresh_token_cookie_name": "AUTHP_REFRESH_TOKEN",
+						"oidc_session_id_cookie_name": "AUTHP_OIDC_SESSION_ID",
+						"oidc_request_id_cookie_name": "AUTHP_OIDC_REQUEST_ID",
+						"saml_session_id_cookie_name": "AUTHP_SAML_SESSION_ID",
+						"cross_device_session_id_cookie_name": "AUTHP_CROSS_DEVICE_SESSION_ID",
 						"cookie_name_prefix": "AUTHP"
 					},
 					"crypto_key_store_config": {
@@ -100,6 +104,9 @@ func TestParseCaddyfileIdentityProvider(t *testing.T) {
 					  "client_id": "foo",
 					  "client_secret": "bar",
 					  "driver": "generic",
+					  "identity_token_field_name": "id_token",
+					  "scopes": ["openid", "email", "profile"],
+					  "login_icon": {"background_color":"#324960","class_name":"lab la-codepen la-2x","color":"white","text_color":"#37474f"},
 					  "jwks_keys": {
 						"87329db33bf": "testdata/oauth/87329db33bf_pub.pem"
 					  },
@@ -156,6 +163,10 @@ func TestParseCaddyfileIdentityProvider(t *testing.T) {
 						"identity_token_cookie_name": "AUTHP_ID_TOKEN",
 						"access_token_cookie_name": "AUTHP_ACCESS_TOKEN",
 						"refresh_token_cookie_name": "AUTHP_REFRESH_TOKEN",
+						"oidc_session_id_cookie_name": "AUTHP_OIDC_SESSION_ID",
+						"oidc_request_id_cookie_name": "AUTHP_OIDC_REQUEST_ID",
+						"saml_session_id_cookie_name": "AUTHP_SAML_SESSION_ID",
+						"cross_device_session_id_cookie_name": "AUTHP_CROSS_DEVICE_SESSION_ID",
 						"cookie_name_prefix": "AUTHP"
 					},
 					"crypto_key_store_config": {
@@ -191,6 +202,9 @@ func TestParseCaddyfileIdentityProvider(t *testing.T) {
 					  "client_id": "foo",
 					  "client_secret": "bar",
 					  "driver": "generic",
+					  "identity_token_field_name": "id_token",
+					  "scopes": ["openid", "email", "profile"],
+					  "login_icon": {"background_color":"#324960","class_name":"lab la-codepen la-2x","color":"white","text_color":"#37474f"},
 					  "jwks_keys": {
 						"87329db33bf": "testdata/oauth/87329db33bf_pub.pem"
 					  },

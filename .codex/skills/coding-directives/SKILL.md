@@ -1,6 +1,6 @@
 ---
 name: coding-directives
-description: caddy-security repository coding standards and implementation directives for Go/Caddy code, including Caddy module boundaries, security app lifecycle, authenticate/authorize plugin behavior, Caddyfile parser patterns, authcrunch integration, runtime replacement and secrets handling, errors, logging, imports, comments, tests, and fixtures. Use when creating, modifying, or reviewing application code in this repository or when deciding coding patterns for Caddyfile directives, Caddy modules, authcrunch config mapping, HTTP handlers, or Go tests.
+description: "Implement or review caddy-security Go code, Caddy modules, parsers, lifecycle, and HTTP delegation. Use for app/plugin boundaries, authcrunch integration, errors, logging, and code conventions."
 ---
 
 # Coding Directives
@@ -12,9 +12,55 @@ small, idiomatic Go changes that preserve Caddy module boundaries, delegate auth
 logic to `go-authcrunch`, and keep parser behavior covered by focused tests and
 fixtures.
 
-Use the repo-local `testing-and-ci` skill when choosing or running tests. Use
-`scripts-and-automation` for Makefile targets, generated artifacts, dependency
-workflow, or local `go-authcrunch` replacement work.
+The [testing contract](../testing-and-ci/SKILL.md) governs test selection and
+coverage. [Automation ownership](../scripts-and-automation/SKILL.md) covers Make
+targets, generated artifacts, and dependency/replacement workflows.
+
+After code changes, review and update the relevant repo-local skills and linked
+references in the same change so implementation and operational guidance match
+the final behavior. This is part of completing the code work; follow
+[keeping skills current](../skill-authoring/SKILL.md#keep-skills-current-after-code-changes)
+for scope, evidence, and cases where existing guidance remains accurate.
+Do not add Markdown documentation to `docs/` or `assets/docs/`; follow the
+[skill-authoring ownership guidance](../skill-authoring/references/caddy-security.md#ownership-and-routing)
+for documentation ownership and placement.
+
+## Repository Scope
+
+Keep source changes inside `caddy-security`. Sibling repositories such as
+`../go-authcrunch` are read-only references and are updated separately.
+
+The sole sibling-write exception is `../xcaddy-caddy-security`, the integrated
+xcaddy build workspace. Creating, updating, building in, and cleaning that
+workspace is allowed when needed for the xcaddy workflow. The exception does
+not permit changes to sibling source modules referenced by the build, including
+go-authcrunch. No other sibling directory is a permitted write destination.
+
+This boundary covers creating, editing, deleting, restoring, staging, and
+committing files, including code, tests, fixtures, dependency files, skills,
+generated artifacts, and Git metadata. Outside the named xcaddy workspace,
+do not run sibling build, test, formatting, generation, license, dependency,
+or cleanup commands, or change those repositories' Git state through fetch,
+pull, checkout, reset, tag, or other Git mutations.
+
+Before a mutating command, confirm its repository root and working directory,
+inspect the invoked script's side effects, and resolve its output paths. A
+command launched from this repository can still write elsewhere. Do not bypass
+the boundary through symlinks, linked worktrees sharing a sibling's Git metadata,
+module replacement paths, or output-directory flags. Keep task files and chosen
+build/report destinations in this checkout's working areas, such as `tmp/`,
+`bin/`, and `.coverage/`, except for the named xcaddy build workspace. Resolve
+that workspace's physical path before cleanup so a symlink cannot redirect the
+exception into another sibling repository.
+
+Reading sibling source, skills, versions, and history is allowed. References to
+upstream APIs, tests, and integration wiring are context, not instructions to
+modify or run that project. A local Go replacement may select existing sibling
+source for tests of this module; it does not authorize sibling changes. If a
+fix requires an upstream change, document the affected contract and separate
+work needed, complete the work possible here, and state any validation blocker.
+Do not patch the sibling, duplicate its runtime here to avoid the boundary, or
+request to expand the current task into that repository.
 
 ## Architecture
 
@@ -33,6 +79,11 @@ or shared across multiple root-package files.
 
 ## Caddy Modules
 
+For runtime construction, ownership, request draining, reload, or cleanup work,
+read [Runtime lifecycle](references/runtime-lifecycle.md). It traces Caddy's
+host ordering, the app's disposal contract, identity-file ownership restrictions,
+and the unit/E2E tests that verify those behaviors.
+
 Register Caddy modules and Caddyfile directives in `init` functions near the
 module implementation. Provide a `CaddyModule` method with the correct public
 Caddy module ID and `New` constructor.
@@ -47,12 +98,20 @@ For HTTP middleware config fields, preserve matching `json`, `xml`, and `yaml`
 tags unless the surrounding type intentionally differs. Keep runtime-only fields
 unexported and untagged.
 
-In `Provision`, resolve the `security` app through Caddy context, validate nil
-app/config cases, apply Caddy replacer substitutions where needed, retrieve
-named authcrunch objects, and return contextual errors. Let `Validate` check
-required names and provisioned runtime pointers.
+In `Provision`, resolve the `security` app through Caddy context, validate
+app/config cases, apply Caddy replacer substitutions where needed, and validate
+named declarations. The default in-memory app can provide runtime objects during
+provisioning; persistent state defers root construction until `App.Start` owns
+storage. A declared portal or policy can therefore be valid before its runtime
+pointer exists. Preserve deferred lookup and request admission checks; do not
+reject persistent candidates merely because `Provision` has no runtime object.
+The [lifecycle contract](references/runtime-lifecycle.md) owns the ordering.
 
 ## Caddyfile Parsers
+
+Use [configuration-authentication-cross-device](../configuration-authentication-cross-device/SKILL.md)
+to implement or review cross-device directive aggregation, delegated parsing,
+approval boundaries and host/browser acceptance tests.
 
 Follow the existing parser shape:
 
@@ -71,7 +130,25 @@ Return `d.ArgErr()` for malformed top-level argument counts. Use `h.Errf` or
 them for malformed directive values.
 
 Keep syntax comments above parser functions current when adding or changing
-directives. Future agents rely on those comments to discover Caddyfile shape.
+directives **or updating a dependency that owns delegated grammar**. Document
+headers, body scope, argument counts, aliases, repetition, and the parser that
+owns deeper validation. Keep restricted forms visible with an explicit status;
+do not delete documented syntax merely because a shared validator rejects it.
+Update runnable examples and the owning configuration skill in the same change.
+Follow the [syntax maintenance workflow](../configuration/references/syntax-maintenance.md)
+for the source inventory and validation boundaries.
+
+Explain behavior alongside the syntax when a setting's name is insufficient.
+Include units/defaults, the meaning of omission/zero/disabled values, the scope
+of limits (per user, session, portal or process), inheritance and precedence,
+and consequential interactions or failure behavior. Explain the operational
+reason for a restriction or tradeoff when supported by the implementation:
+for example, whether a timeout slides, what consumes a session slot, or why
+native body transport requires explicit opt-in. Verify these details against
+the selected parser **and runtime**; field names alone do not establish them.
+Keep the grammar easy to scan, follow it with focused explanatory paragraphs,
+and link to the owning feature reference for longer protocol examples. Scale
+the detail to the feature instead of repeating a checklist for trivial options.
 
 When mapping Caddyfile input, prefer authcrunch config constructors and `Add*`
 methods over duplicating validation in this repository. Use
@@ -98,10 +175,39 @@ external state, Caddy context, or request-scoped work.
 
 ## HTTP Handlers
 
+Before AuthCrunch consumes forwarded metadata, call `normalizeSecurityMetadata`
+from `request_metadata.go`. Use Caddy's `trusted_proxy` and `client_ip` context
+variables; do not reparse the proxy chain or synthesize Origin/TLS evidence.
+See [edge trust](../configuration-http-integrations/SKILL.md#edge-trust).
+
+`Gatekeeper.Authenticate` has two independent outputs: an error and response
+flags. `AuthorizationHandler` preserves a handled response and runs downstream
+only after explicit authorization or bypass; unhandled errors deny. The legacy
+authenticator remains available for manually written JSON, but Caddy's generic
+authentication chain cannot express a handled OAuth callback/logout. Current
+`authorize` directives emit `http.handlers.authorization`. Preserve handled
+status/body, mark denials and redirects no-store before headers commit, and
+never proceed upstream on nil error alone. `TestAuthzResponseContract` and the
+composed TLS suite check the actual protected handler boundary.
+
 Keep request handling thin. For `authenticate`, construct the authcrunch request
 object, attach `util.GetRequestID(r)`, and delegate to the portal. For
 `authorize`, delegate to the gatekeeper and only translate successful
 authcrunch authorization data into Caddy `caddyauth.User` metadata.
+
+For OP integration, retain the complete canonical request URL when calling
+`Portal.ServeHTTP`. It owns OIDC dispatch and completed-login evidence. Do not
+strip the issuer mount, preauthorize OP endpoints, call `CompleteLogin`, or
+reconstruct authentication evidence in Caddy middleware. Preserve the portal's
+status, headers and body; see the
+[OIDC HTTP contract](../configuration-oauth-applications/references/oidc-provider.md#http-mount-and-protocol-contract).
+
+The same dispatch owns refresh/session/logout credential authentication before
+access-token gates and serves the matching embedded browser client. Preserve
+headers (including the SID precondition), strict JSON failures, cookie deletion,
+no-store and continuation CSP. Never add automatic rotation retries or recover
+uncertainty with session lookup. See the
+[browser refresh contract](../authentication-portal-api/references/browser-refresh.md).
 
 When adding metadata, check presence before type assertions unless the upstream
 authcrunch contract guarantees the field. Keep metadata values string-based for
@@ -119,19 +225,33 @@ Use zap structured logging for app lifecycle and runtime diagnostics. Log
 identifiers, paths, directive names, and types; never log secrets or token
 payloads.
 
+Diagnostic suppression is governed by [configuration-logging](../configuration-logging/SKILL.md).
+Delegate rule parsing and immutable filters to AuthCrunch. Its root logger
+wrapping does not reach Caddy's private authentication middleware logger, and
+Caddy v2.11.7's custom cores only tee output. Keep that upstream limitation
+explicit; never change authentication results to silence a host log.
+
 ## Style
 
+Do not import or use Go's `reflect` package in repository Go code, including
+tests and helpers. Use explicit types, type switches, interfaces, or generics.
+Keep configuration validation typed instead of building runtime field walkers.
+
 Keep the Apache license header on Go files. Use package `security` for root
-application files and package `main` only for `cmd/authcrunch`.
+application files and package `main` for executable entrypoints under `cmd/`,
+including `cmd/authcrunch` and `cmd/caddy-authenticator`. The standalone
+authenticator reuses the public authclient package; see its
+[maintenance reference](../scripts-and-automation/references/caddy-authenticator.md).
 
 Run `gofmt` on Go changes. Let Go tooling group imports into standard library,
 third-party packages, and local module packages. Use side-effect imports only
 for module registration or command bootstrapping, and keep the reason obvious
 from local context.
 
-Run `make license` after changing repository files and before final review. It
-adds license headers to Go files and regenerates README download links, so
-inspect the resulting diff and keep only intentional changes.
+Keep the existing license on edited Go files and include it in new Go files.
+`make license` rewrites all selected Go headers and README download links; run
+it only when that maintenance is part of the task. Skill-only edits require no
+license regeneration. Review any generated diff for unintended changes.
 
 Prefer small, unexported helpers for parser branches and runtime plumbing.
 Export only Caddy module types, public interfaces, and functions that are
@@ -146,12 +266,19 @@ blocks. Avoid comments that merely restate the code.
 
 ## Tests And Fixtures
 
+Code changes require relevant unit tests and E2E tests that exercise the changed
+behavior under the [required coverage contract](../testing-and-ci/SKILL.md#required-coverage-for-code-changes).
+Add or amend missing coverage and run the applicable checks in this repository.
+
 Add focused parser coverage in the closest `caddyfile_*_test.go` when changing
 Caddyfile syntax or validation. Include malformed cases when the parser has a
 meaningful error path.
 
-Update `testdata/caddyfile_adapt` fixtures when adapted Caddy JSON changes:
-`<prefix>.Caddyfile`, `<prefix>.json`, and optional `<prefix>.env`.
+For every Caddyfile directive change, add or amend adaptation cases in
+`testdata/caddyfile_adapt/` and register them in `caddyfile_adapt_test.go` as
+needed. Include `<prefix>.Caddyfile`, expected `<prefix>.json`, and optional
+`<prefix>.env`; this requirement also applies when the JSON shape stays the
+same. Adaptation coverage supplements unit and E2E tests.
 
 Update `<prefix>_resolved.json` and `TestResolveRuntimeAppConfig` coverage when
 runtime defaults, replacements, secrets, credentials, UI, OAuth, registration,
@@ -163,3 +290,13 @@ requires formatted output.
 
 After fixture or parser work, run the narrow relevant test first, then broaden
 according to the `testing-and-ci` skill.
+
+## Acceptance criteria
+
+- Valid in-memory and persistent configurations follow their distinct construction
+  timing. Requests cannot use a runtime before admission opens or after cleanup.
+- A rejected candidate preserves the serving app; cleanup drains admitted calls
+  before releasing resources. Validate through the lifecycle unit/E2E surfaces.
+- Parser changes preserve encoded values, report malformed input, and have
+  adaptation plus runtime/user-flow evidence where applicable. Skill-only work
+  neither regenerates licenses nor mutates sibling source.

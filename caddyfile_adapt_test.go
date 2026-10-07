@@ -64,6 +64,80 @@ func TestCaddyfileAdaptAuthenticationToJSON(t *testing.T) {
 		shouldErr           bool
 		err                 error
 	}{
+		{name: "duplicate typed ACL alias is rejected", inputFileNamePrefix: "testcase_authorize_acl_fields_duplicate", shouldErr: true,
+			err: fmt.Errorf("parsing caddyfile tokens for 'security': authorization policy \"custom\": acl field configuration error: duplicate name, at Caddyfile:13")},
+		{name: "typed custom ACL fields and policy isolation", inputFileNamePrefix: "testcase_authorize_acl_fields"},
+		{name: "typed ACL field requires exactly one block", inputFileNamePrefix: "testcase_authorize_acl_fields_blocks", shouldErr: true,
+			err: fmt.Errorf("Unexpected '{' on a new line; did you mean to place the '{' on the previous line?, at Caddyfile:9")},
+		{name: "typed ACL policy requires an unquoted closing brace", inputFileNamePrefix: "testcase_authorize_acl_fields_policy_brace", shouldErr: true,
+			err: fmt.Errorf("parsing caddyfile tokens for 'security': authorization policy \"custom\" requires an unquoted closing brace, at Caddyfile:9")},
+		{name: "password option error redacts imports", inputFileNamePrefix: "testcase_authenticate_with_argon2_malformed", shouldErr: true,
+			err: fmt.Errorf("parsing caddyfile tokens for 'security': malformed \"security.identity.store[localdb].user\" directive with [alice]: password only supports the overwrite option")},
+		{name: "Argon2, bcrypt and plaintext local passwords", inputFileNamePrefix: "testcase_authenticate_with_argon2"},
+		{name: "logging issue example", inputFileNamePrefix: "testcase_security_logging"},
+		{name: "logging matchers and token encoding", inputFileNamePrefix: "testcase_security_logging_matchers"},
+		{name: "empty logging", inputFileNamePrefix: "testcase_security_logging_empty"},
+		{name: "direct OAuth minimal and deferred settings", inputFileNamePrefix: "testcase_authorize_oauth"},
+		{name: "persistent state and portal-free OAuth", inputFileNamePrefix: "testcase_security_state"},
+		{name: "match any System API policy", inputFileNamePrefix: "testcase_authenticate_with_match_any_system"},
+		{name: "GitHub ID and organization transforms", inputFileNamePrefix: "testcase_authenticate_with_github_transforms"},
+		{name: "conditional authentication and LDAP fallback roles", inputFileNamePrefix: "testcase_authenticate_with_challenges"},
+		{name: "match any refresh policy", inputFileNamePrefix: "testcase_authenticate_with_match_any_refresh"},
+		{name: "optional cross-device login and binding cookie", inputFileNamePrefix: "testcase_authenticate_with_cross_device"},
+		{name: "portal token refresh settings, defaults, disabled and deferred", inputFileNamePrefix: "testcase_authenticate_with_token_refresh"},
+		{name: "refresh override preserves invalid shared cookie whitespace", inputFileNamePrefix: "testcase_authenticate_with_token_refresh_cookie_whitespace", shouldErr: true,
+			err: fmt.Errorf("parsing caddyfile tokens for 'security': security.authentication.portal \"myportal\" cookies: invalid refresh cookie name at line 1, at Caddyfile:12")},
+		{name: "OIDC provider settings, defaults, disabled and absent blocks", inputFileNamePrefix: "testcase_authenticate_with_oidc_provider"},
+		{name: "OIDC issuer must preserve its browser origin", inputFileNamePrefix: "testcase_authenticate_with_oidc_noncanonical_issuer", shouldErr: true,
+			err: fmt.Errorf("parsing caddyfile tokens for 'security': portal \"myportal\" oidc issuer requires a canonical HTTPS origin: omit port 443 and leading zeroes, at Caddyfile:16")},
+		{name: "quoted provider value cannot close portal block", inputFileNamePrefix: "testcase_authenticate_with_oidc_unterminated", shouldErr: true,
+			err: fmt.Errorf("unexpected EOF, at Caddyfile:8")},
+		{name: "named OAuth applications", inputFileNamePrefix: "testcase_security_oauth_applications"},
+		{name: "private registration store and provider", inputFileNamePrefix: "testcase_security_oauth_registration_store"},
+		{name: "OAuth registration store requires its namespace", inputFileNamePrefix: "testcase_security_oauth_registration_legacy", shouldErr: true,
+			err: fmt.Errorf("parsing caddyfile tokens for 'security': unsupported security directive, at Caddyfile:3")},
+		{name: "malformed registration reference", inputFileNamePrefix: "testcase_security_oauth_registration_malformed", shouldErr: true,
+			err: fmt.Errorf("parsing caddyfile tokens for 'security': registration requires one revision and occurs once, at Caddyfile:6")},
+		{
+			name:                "quoted application value cannot close security block",
+			inputFileNamePrefix: "testcase_security_oauth_application_enclosing_malformed",
+			shouldErr:           true,
+			err:                 fmt.Errorf("unexpected EOF, at Caddyfile:8"),
+		},
+		{
+			name:                "OAuth settings after closing brace are rejected",
+			inputFileNamePrefix: "testcase_security_oauth_application_boundary_malformed",
+			shouldErr:           true,
+			err:                 fmt.Errorf("parsing caddyfile tokens for 'security': oauth application closing brace must end its line, at Caddyfile:7"),
+		},
+		{
+			name:                "malformed OAuth application header redacts credentials",
+			inputFileNamePrefix: "testcase_security_oauth_application_header_malformed",
+			shouldErr:           true,
+			err:                 fmt.Errorf("parsing caddyfile tokens for 'security': expected oauth application, oauth registration store, or oauth identity provider header, at Caddyfile:3"),
+		},
+		{
+			name:                "empty OAuth application requires explicit credentials",
+			inputFileNamePrefix: "testcase_security_oauth_application_empty",
+			shouldErr:           true,
+			err:                 fmt.Errorf("parsing caddyfile tokens for 'security': oauth application requires an explicit or persisted client_id, at Caddyfile:4"),
+		},
+		{name: "portal and policy crypto algorithms and legacy defaults", inputFileNamePrefix: "testcase_authenticate_with_crypto"},
+		{name: "shared upstream OAuth parser and trust", inputFileNamePrefix: "testcase_authenticate_with_oauth_parser"},
+		{name: "quoted OAuth values remain exact", inputFileNamePrefix: "testcase_authenticate_with_oauth_quoted_values"},
+		{name: "OAuth driver defaults", inputFileNamePrefix: "testcase_authenticate_with_oauth"},
+		{
+			name:                "missing redirect trust value returns an error",
+			inputFileNamePrefix: "testcase_authenticate_with_redirect_trust_malformed",
+			shouldErr:           true,
+			err:                 fmt.Errorf("parsing caddyfile tokens for 'security': security.authentication.portal.trust directive %q is malformed, at Caddyfile:4", "login redirect uri domain example.test path"),
+		},
+		{
+			name:                "legacy OAuth icon cannot hide duplicate fields",
+			inputFileNamePrefix: "testcase_authenticate_with_oauth_icon_malformed",
+			shouldErr:           true,
+			err:                 fmt.Errorf("parsing caddyfile tokens for 'security': duplicate OAuth login icon text_color directive at line 7, at Caddyfile:9"),
+		},
 		{
 			name:                "authorize plugin config",
 			inputFileNamePrefix: "testcase_authorize_ok",
@@ -87,6 +161,20 @@ func TestCaddyfileAdaptAuthenticationToJSON(t *testing.T) {
 		{
 			name:                "authenticate plugin config with cookie specific domain",
 			inputFileNamePrefix: "testcase_authenticate_with_cookie_domain",
+		},
+		{
+			name:                "independent admin API and private key export flags",
+			inputFileNamePrefix: "testcase_authenticate_with_admin_api",
+		},
+		{
+			name:                "malformed admin API directive redacts arguments",
+			inputFileNamePrefix: "testcase_authenticate_with_admin_api_malformed",
+			shouldErr:           true,
+			err:                 fmt.Errorf("parsing caddyfile tokens for 'security': unsupported directive for security.authentication.portal.enable, at Caddyfile:6"),
+		},
+		{
+			name:                "shared cookie directives and policy coordination",
+			inputFileNamePrefix: "testcase_authenticate_with_cookie_parser",
 		},
 		{
 			name:                "authenticate plugin config with cookie multi domain",
@@ -134,7 +222,7 @@ func TestCaddyfileAdaptAuthenticationToJSON(t *testing.T) {
 			t.Logf("output file: %s", outputFilePath)
 
 			for _, tv := range parseTestEnvVars(envFilePath) {
-				t.Logf("setting environment variable %s=%s", tv.key, tv.value)
+				t.Logf("setting environment variable %s", tv.key)
 				os.Setenv(tv.key, tv.value)
 				t.Cleanup(func() {
 					t.Logf("unsetting environment variable %s", tv.key)
@@ -153,6 +241,12 @@ func TestCaddyfileAdaptAuthenticationToJSON(t *testing.T) {
 
 			got := strings.TrimSpace(string(inputData)) + "\n"
 			want := strings.TrimSpace(string(outputData))
+			if tc.inputFileNamePrefix == "testcase_security_oauth_registration_store" {
+				cfg, _ := registrationTestStore(t)
+				registrationTestCreate(t, cfg, "client_id persisted-website-id", "client_secret "+registrationTestSecret)
+				t.Setenv("SECURITY_TEST_REGISTRATION_PATH", cfg.Path)
+				want = strings.ReplaceAll(want, "__REGISTRATION_STORE__", cfg.Path)
+			}
 			var prettyBuf bytes.Buffer
 			err = json.Indent(&prettyBuf, []byte(want), "", "\t")
 			if err != nil {

@@ -1,13 +1,18 @@
 ---
 name: source-code-management
-description: caddy-security source code management and commit message rules. Use when creating, reviewing, or updating commit messages, especially when the user asks to create a commit message for a change in this repository.
+description: "Create or review caddy-security commit messages using repository indicators, required body sections, and timestamped message files. A message request does not create a commit."
 ---
 
 # Source Code Management
 
 ## Commit Message Rules
 
-All commits must have a proper commit message.
+All commits must have a proper commit message. Inspect the requested diff and
+`git status --short`, including staged and unstaged work, before describing it.
+Use the user's requested scope; do not include unrelated work merely because it
+is present in the checkout. Describe the final behavior and actual validation,
+not a transcript or an abandoned implementation. Creating a message does not
+stage files, create a commit, tag a release, or publish changes.
 
 A hand-written commit message subject line must conform to the following
 rules:
@@ -47,10 +52,11 @@ Selection rules:
   helping AI agents work with this repository.
 - Use `ops` for dependency or toolchain version bumps. Use `build` only
   when the build behavior itself changes.
-- The current Makefile release target creates subjects like `released v1.1.62`
-  without a change indicator. Treat that as existing automation behavior, not a
-  template for hand-written commit messages. For hand-written release workflow
-  changes, use `ops`.
+- The Makefile release target creates the subject `ops: released v<VERSION>`.
+  For hand-written release workflow changes, use `ops`. Follow
+  [release-and-versioning](../release-and-versioning/SKILL.md) for the release
+  procedure and publication scope; an automated subject does not replace the
+  body requirements for hand-written commit messages.
 - Use `various` only when a commit intentionally spans unrelated surfaces and no
   more specific indicator is honest.
 - Normalize older repository labels when creating new messages: use
@@ -173,7 +179,19 @@ More info: added a focused contributor workflow and repository etiquette notes.
 
 ## Commit Message File Workflow
 
-When asked to "create commit message for the change", create a file in
-`tmp/commits` and place the commit message in that file. Commit message files in
-`tmp/commits` are working artifacts and should not be committed unless explicitly
-requested. Prefix the file name with `YYYYMMDD_HHMM_` prefix.
+For every request to create or generate a commit message, write it below
+`tmp/commits` with a `YYYYMMDD_HHMM_` prefix and always provide the corresponding
+`git commit -F ...` command. Do not require the user to ask separately for a
+message file. A review-only request does not create a file unless asked.
+
+Commit message files in `tmp/commits` are working artifacts and should not be
+committed unless explicitly requested.
+
+## Acceptance criteria
+
+- The subject has one allowed indicator, is shorter than 87 characters, and has
+  no final period. The required body sections appear in order and obey line limits.
+- Tests names actual commands or manual checks performed and reports omitted
+  smoke tests with their reason. A proposed test is never described as passing.
+- A message request produces the timestamped file under `tmp/commits` and its
+  `git commit -F` command; a review-only request does not create or commit files.

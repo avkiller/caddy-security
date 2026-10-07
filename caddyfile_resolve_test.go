@@ -128,6 +128,19 @@ func TestResolveRuntimeAppConfig(t *testing.T) {
 		shouldErr           bool
 		err                 error
 	}{
+		{name: "optional cross-device login and binding cookie", inputFileNamePrefix: "testcase_authenticate_with_cross_device"},
+		{name: "direct OAuth settings", inputFileNamePrefix: "testcase_authorize_oauth"},
+		{name: "conditional authentication and LDAP fallback roles", inputFileNamePrefix: "testcase_authenticate_with_challenges"},
+		{name: "match any refresh policy", inputFileNamePrefix: "testcase_authenticate_with_match_any_refresh"},
+		{name: "match any System API policy", inputFileNamePrefix: "testcase_authenticate_with_match_any_system"},
+		{name: "token refresh snapshots and typed config", inputFileNamePrefix: "testcase_authenticate_with_token_refresh"},
+		{name: "named OAuth application credentials remain exact", inputFileNamePrefix: "testcase_security_oauth_applications"},
+		{name: "shared upstream OAuth parser and trust", inputFileNamePrefix: "testcase_authenticate_with_oauth_parser"},
+		{name: "quoted OAuth values remain exact", inputFileNamePrefix: "testcase_authenticate_with_oauth_quoted_values"},
+		{
+			name:                "shared cookie directives and policy coordination",
+			inputFileNamePrefix: "testcase_authenticate_with_cookie_parser",
+		},
 		{
 			name:                "authenticate plugin config with cookie multi domain",
 			inputFileNamePrefix: "testcase_authenticate_with_cookie_multi_domain",
@@ -193,7 +206,20 @@ func TestResolveRuntimeAppConfig(t *testing.T) {
 				t.Fatalf("failed to load config %s: %s", tmpInputFilePath, err)
 			}
 
-			err = ResolveRuntimeAppConfig(context.TODO(), repl, nil, config, logger)
+			input, err := os.ReadFile(inputFilePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var document struct {
+				Apps struct {
+					Security App `json:"security"`
+				} `json:"apps"`
+			}
+			if err := json.Unmarshal(input, &document); err != nil {
+				t.Fatal(err)
+			}
+
+			err = resolveRuntimeAppConfig(context.TODO(), repl, nil, config, document.Apps.Security.OAuthProviderDirectives, document.Apps.Security.PortalTokenRefreshDirectives, document.Apps.Security.OAuthAuthorizationDirectives, logger)
 			if err != nil {
 				if !tc.shouldErr {
 					t.Fatalf("expected success, got: %v", err)
@@ -205,6 +231,9 @@ func TestResolveRuntimeAppConfig(t *testing.T) {
 			}
 			if tc.shouldErr {
 				t.Fatalf("unexpected success, want: %v", tc.err)
+			}
+			if err := resolvePortalCookieDirectives(t.Context(), repl, nil, config, document.Apps.Security.PortalCookieDirectives, logger); err != nil {
+				t.Fatal(err)
 			}
 
 			if err := config.DumpToJSONFile(tmpOutputFilePath); err != nil {
